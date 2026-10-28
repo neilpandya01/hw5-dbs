@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+/* Color tokens. Text pairs are chosen for 4.5:1+ contrast on their background. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #141a21;
+  --muted: #56606b;
+  --line: #d8dee5;
+  /* Borders of things you type in or press: 3:1 against their background (WCAG 1.4.11). */
+  --control: #7d8794;
+  --accent: #1c5d8c;
+  --accent-ink: #ffffff;
+  --accent-soft: #e2edf6;
+  --danger: #b42318;
+  --warn: #8a4b00;
+  --warn-soft: #fdf3e2;
+  --ok: #1d6b3f;
+  --ok-soft: #e3f2e8;
+  /* The radar (decorative; everything on it is also written out as text). */
+  --radar-bg: #e9f0f6;
+  --radar-ring: #b7c8d8;
+  --radar-range: #1c5d8c;
+  --radar-you: #1c5d8c;
+  --plane: #141a21;
+  /* Rarity tiers: always shown with their name, never by color alone. */
+  --tier-common: #56606b;
+  --tier-uncommon: #1d6b3f;
+  --tier-rare: #5b3fb0;
+  --tier-legendary: #8a4b00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1419;
+    --surface: #182029;
+    --ink: #e8edf2;
+    --muted: #9aa6b2;
+    --line: #2c3743;
+    --control: #6b7785;
+    --accent: #8cc8f0;
+    --accent-ink: #0b2234;
+    --accent-soft: #1a2d3d;
+    --danger: #ff8a7f;
+    --warn: #f3bf6b;
+    --warn-soft: #2e2615;
+    --ok: #7fd6a2;
+    --ok-soft: #173024;
+    --radar-bg: #121b24;
+    --radar-ring: #2c3a48;
+    --radar-range: #8cc8f0;
+    --radar-you: #8cc8f0;
+    --plane: #e8edf2;
+    --tier-common: #9aa6b2;
+    --tier-uncommon: #7fd6a2;
+    --tier-rare: #b9a6ff;
+    --tier-legendary: #f3bf6b;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-control: var(--control);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-tier-common: var(--tier-common);
+  --color-tier-uncommon: var(--tier-uncommon);
+  --color-tier-rare: var(--tier-rare);
+  --color-tier-legendary: var(--tier-legendary);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Keep anything scrolled into view (including focus from Tab) clear of the pinned header. */
+html {
+  scroll-padding-top: 8rem;
+  scroll-padding-bottom: 5rem;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* One visible focus style everywhere, for keyboard users. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The radar sweep: slow, so it never pulls focus. Off for anyone who prefers less motion. */
+.radar-sweep {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  animation: radar-sweep 6s linear infinite;
+}
+@keyframes radar-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* "You are here": a soft pulse around the dot. */
+.radar-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: radar-pulse 2.4s ease-out infinite;
+}
+@keyframes radar-pulse {
+  from {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .radar-sweep,
+  .radar-pulse {
+    animation: none;
+  }
+  .radar-pulse {
+    opacity: 0;
+  }
+}
