@@ -11,6 +11,10 @@ export function StorageBanner() {
       {store.storage === "load-failed"
         ? "Your account couldn't be loaded. Check your connection, then reload the page."
         : "Your last change wasn't saved. Check your connection, then reload the page."}
+      {/* While developing, show the technical reason so it can be fixed. Never shown on the live site. */}
+      {process.env.NODE_ENV !== "production" && store.problem && (
+        <span className="mt-1 block font-mono text-xs break-words">Details: {store.problem}</span>
+      )}
     </div>
   );
 }

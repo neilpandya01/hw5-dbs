@@ -38,7 +38,17 @@ export type Data = {
 /** save-failed: a change wasn't saved. load-failed: your data couldn't be loaded. */
 export type StorageStatus = "ok" | "save-failed" | "load-failed";
 
-export type Snapshot = { userId: string; data: Data; storage: StorageStatus };
+/** `problem` is the technical reason for a failed load or save, shown while developing. */
+export type Snapshot = { userId: string; data: Data; storage: StorageStatus; problem?: string };
+
+/** Supabase's error message and code (or a plain Error's message), for the console and the dev banner. */
+function describe(e: unknown): string {
+  if (e && typeof e === "object") {
+    const { message, code, details, hint } = e as { message?: string; code?: string; details?: string; hint?: string };
+    return [message, code && `(code ${code})`, details, hint].filter(Boolean).join(" ") || String(e);
+  }
+  return String(e);
+}
 
 type HunterRow = { onboarded: boolean; lat: number | string | null; lon: number | string | null; location_at: string | null };
 type CatchRow = {
@@ -103,12 +113,18 @@ export async function loadStore(userId: string | null) {
   const seq = ++loadSeq;
   if (!userId) return set(null);
   const sb = supabase();
-  if (!sb) return set({ userId, data: EMPTY, storage: "load-failed" });
+  if (!sb) {
+    const problem = "NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is missing from .env.local (restart npm run dev after adding them).";
+    console.error(`[store] ${problem}`);
+    return set({ userId, data: EMPTY, storage: "load-failed", problem });
+  }
   try {
-    let hunter = (await sb.from("hunters").select("onboarded, lat, lon, location_at").maybeSingle()).data as HunterRow | null;
+    const found = await sb.from("hunters").select("onboarded, lat, lon, location_at").maybeSingle();
+    if (found.error) throw found.error;
+    let hunter = found.data as HunterRow | null;
     if (!hunter) {
       // First visit: create this person's row (user_id comes from their Clerk token).
-      const created = await sb.from("hunters").insert({}).select("onboarded, lat, lon, location_at").single();
+      const created = await sb.from("hunters").insert({ onboarded: false }).select("onboarded, lat, lon, location_at").single();
       if (created.error && created.error.code !== "23505") throw created.error;
       // 23505: another tab created it a moment ago; read that one.
       hunter = (created.data ??
@@ -130,8 +146,10 @@ export async function loadStore(userId: string | null) {
         catches: (catches.data as CatchRow[]).map(toCatch),
       },
     });
-  } catch {
-    if (seq === loadSeq) set({ userId, data: EMPTY, storage: "load-failed" });
+  } catch (e) {
+    const problem = describe(e);
+    console.error(`[store] Couldn't load your account: ${problem}`);
+    if (seq === loadSeq) set({ userId, data: EMPTY, storage: "load-failed", problem });
   }
 }
 
@@ -145,7 +163,11 @@ async function save(change: (d: Data) => Data, write: () => PromiseLike<{ data: 
   set({ ...before, data: change(before.data) });
   const { data, error } = await write();
   const ok = !error && Array.isArray(data) && data.length > 0;
-  if (!ok && snapshot?.userId === before.userId) set({ ...snapshot, data: before.data, storage: "save-failed" });
+  if (!ok) {
+    const problem = error ? describe(error) : "The update changed no rows (row-level security didn't match your account).";
+    console.error(`[store] Couldn't save: ${problem}`);
+    if (snapshot?.userId === before.userId) set({ ...snapshot, data: before.data, storage: "save-failed", problem });
+  }
   return ok;
 }
 
