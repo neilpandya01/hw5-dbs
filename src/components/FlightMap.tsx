@@ -8,8 +8,8 @@ import { CATCH_RANGE_MI, moveBy, type LatLon } from "@/lib/geo";
 export type MapPlane = {
   id: string;
   position: LatLon;
-  /** Degrees, 0 = north. A short dashed line shows where it's heading. */
-  heading: number;
+  /** Direction of travel, degrees from north: the icon points that way, with a dashed line ahead. Null if unknown. */
+  heading: number | null;
   /** Read aloud and shown on hover: "United 787-8, 3.2 miles northeast". */
   label: string;
   /** Faded when it can't be caught (out of range, or over an airport). */
@@ -217,20 +217,22 @@ export function FlightMap({
     if (!leaflet || !layer) return;
     layer.clearLayers();
     for (const p of planes) {
-      const ahead = moveBy(
-        p.position,
-        Math.sin((p.heading * Math.PI) / 180) * HEADING_LINE_MI,
-        Math.cos((p.heading * Math.PI) / 180) * HEADING_LINE_MI,
-      );
-      leaflet
-        .polyline(
-          [
-            [p.position.lat, p.position.lon],
-            [ahead.lat, ahead.lon],
-          ],
-          { color: palette.heading, weight: 1.5, dashArray: "3 5", opacity: p.catchable ? 0.7 : 0.35, interactive: false },
-        )
-        .addTo(layer);
+      if (p.heading !== null) {
+        const ahead = moveBy(
+          p.position,
+          Math.sin((p.heading * Math.PI) / 180) * HEADING_LINE_MI,
+          Math.cos((p.heading * Math.PI) / 180) * HEADING_LINE_MI,
+        );
+        leaflet
+          .polyline(
+            [
+              [p.position.lat, p.position.lon],
+              [ahead.lat, ahead.lon],
+            ],
+            { color: palette.heading, weight: 1.5, dashArray: "3 5", opacity: p.catchable ? 0.7 : 0.35, interactive: false },
+          )
+          .addTo(layer);
+      }
       const selected = p.id === selectedId;
       leaflet
         .marker([p.position.lat, p.position.lon], {
@@ -239,7 +241,7 @@ export function FlightMap({
           keyboard: true,
           icon: leaflet.divIcon({
             className: `plane-marker${selected ? " is-selected" : ""}${p.catchable ? "" : " is-faded"}`,
-            html: `<span style="transform: rotate(${p.heading}deg)">${PLANE_SVG}</span>`,
+            html: `<span style="transform: rotate(${p.heading ?? 0}deg)">${PLANE_SVG}</span>`,
             iconSize: [34, 34],
             iconAnchor: [17, 17],
           }),

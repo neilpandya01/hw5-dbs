@@ -1,18 +1,61 @@
-/**
- * How fresh the flight data is. For now the flight feed isn't connected, so it always says so.
- * When the worker is running, this becomes: loading, fresh ("Updated 12 s ago"), stale
- * (several missed runs), or down (the worker's last run failed), read from the `runs` table.
- */
-export type FeedState = { status: "not-connected" };
+import { ago, type Feed } from "@/lib/nearby";
 
-export function FeedStatus({ state }: { state: FeedState }) {
-  switch (state.status) {
-    case "not-connected":
+/**
+ * How fresh the flight data is, in one line. Down and limit get a full banner (FeedProblem) as well.
+ */
+export function FeedStatus({ feed, now }: { feed: Feed; now: number }) {
+  const pill = "inline-flex items-center gap-2 self-start rounded-full border px-3 py-1 text-sm";
+  switch (feed.status) {
+    case "loading":
       return (
-        <p className="inline-flex items-center gap-2 self-start rounded-full border border-line bg-surface px-3 py-1 text-sm text-muted">
-          <span aria-hidden="true" className="size-2 rounded-full bg-control" />
-          Live flights: not connected yet
+        <p className={`${pill} border-line bg-surface text-muted`}>
+          <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-control" />
+          Loading flights…
+        </p>
+      );
+    case "fresh":
+      return (
+        <p className={`${pill} border-line bg-surface text-ink`}>
+          <span aria-hidden="true" className="size-2 rounded-full bg-ok" />
+          Live · updated {ago(feed.updatedAt, now)}
+          {feed.slow && <span className="text-muted">· every minute today</span>}
+        </p>
+      );
+    case "stale":
+      return (
+        <p className={`${pill} border-warn bg-warn-soft text-warn`}>
+          <span aria-hidden="true" className="size-2 rounded-full bg-warn" />
+          Flight data is {ago(feed.updatedAt, now).replace(" ago", "")} old
+        </p>
+      );
+    case "down":
+    case "limit":
+      return (
+        <p className={`${pill} border-danger text-danger`}>
+          <span aria-hidden="true" className="size-2 rounded-full bg-danger" />
+          {feed.status === "limit" ? "Paused: daily limit reached" : "Flight data unavailable"}
         </p>
       );
   }
+}
+
+/** The banner for when planes can't be shown at all. */
+export function FeedProblem({ feed }: { feed: Feed }) {
+  if (feed.status !== "down" && feed.status !== "limit") return null;
+  const back =
+    feed.status === "limit" && feed.resumeAt
+      ? ` Updates should be back around ${new Date(feed.resumeAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`
+      : "";
+  return (
+    <div role="alert" className="flex flex-col gap-1 rounded-xl border border-danger bg-surface px-4 py-3 text-sm">
+      <p className="font-medium text-danger">
+        {feed.status === "limit" ? "Sky Hunt has used today's flight data limit." : "Flight data can't be displayed right now."}
+      </p>
+      <p className="text-ink">
+        {feed.status === "limit"
+          ? `Flight updates are paused for everyone until the limit resets. Come back later.${back}`
+          : "Come back later. Your map and collection still work."}
+      </p>
+    </div>
+  );
 }

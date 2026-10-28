@@ -1,22 +1,32 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { loadStore } from "@/lib/store";
+import { setTokenSource } from "@/lib/supabase";
 
 /**
  * Connects the signed-in Clerk user to their data. Renders nothing.
- * Loads this person's onboarding, location, and catches on sign-in; forgets them on sign-out.
- * (When Supabase is connected, this is also where Clerk's session token is handed to it.)
+ *   - Hands Clerk's session token to Supabase, so row-level security (and Realtime) know who is asking.
+ *   - Loads this person's onboarding, location, and catches; forgets them on sign-out.
  */
 export function AccountSync() {
-  const { isLoaded, userId } = useAuth();
+  const { isLoaded, userId, getToken } = useAuth();
+  // Always ask Clerk for a fresh token; held in a ref so a new function identity doesn't reload everything.
+  const tokenFn = useRef(getToken);
+  useEffect(() => {
+    tokenFn.current = getToken;
+  }, [getToken]);
 
   useEffect(() => {
     if (!isLoaded) return;
-    loadStore(userId ?? null);
-    // Signed out (or switched people): nobody else should see their catches or location.
-    return () => loadStore(null);
+    setTokenSource(userId ? () => tokenFn.current() : null);
+    void loadStore(userId ?? null);
+    return () => {
+      // Signed out (or switched people): nobody else should see their catches or location.
+      setTokenSource(null);
+      void loadStore(null);
+    };
   }, [isLoaded, userId]);
 
   return null;

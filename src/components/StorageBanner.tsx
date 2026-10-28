@@ -9,8 +9,8 @@ export function StorageBanner() {
   return (
     <div role="alert" className="rounded-xl border border-warn bg-warn-soft px-4 py-3 text-sm text-warn">
       {store.storage === "load-failed"
-        ? "Your saved progress couldn't be loaded on this device. Reload the page to try again."
-        : "Your last change wasn't saved. This browser may be blocking storage (private window). Reload to try again."}
+        ? "Your account couldn't be loaded. Check your connection, then reload the page."
+        : "Your last change wasn't saved. Check your connection, then reload the page."}
     </div>
   );
 }

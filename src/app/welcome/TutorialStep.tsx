@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@/components/Button";
-import { PlaneCard, type PlaneDetails } from "@/components/PlaneCard";
+import { PlaneCard } from "@/components/PlaneCard";
 import { Radar, type RadarZone } from "@/components/Radar";
 import { RarityBadge } from "@/components/RarityBadge";
-import { airportsNear, noCatchZoneAt, shortName, useAirports } from "@/lib/airports";
+import { airportsNear, noCatchZoneAt, useAirports } from "@/lib/airports";
 import { CATCH_RANGE_MI, compass, distanceMi, moveBy, offsetMi, type LatLon } from "@/lib/geo";
 import { useNearestPlace } from "@/lib/nearestPlace";
 import { finishOnboarding } from "@/lib/store";
@@ -17,6 +17,7 @@ const PRACTICE = {
   id: "practice",
   callsign: "DLH430",
   airline: "Lufthansa",
+  iata: "LH",
   aircraft: "Boeing 747-8",
   rarity: "rare" as const,
   altitudeFt: 24000,
@@ -130,15 +131,6 @@ export function TutorialStep({
     label: a.code,
   }));
 
-  const details: PlaneDetails = {
-    callsign: PRACTICE.callsign,
-    airline: PRACTICE.airline,
-    aircraft: PRACTICE.aircraft,
-    rarity: PRACTICE.rarity,
-    distanceMi: distance,
-    direction,
-    altitudeFt: PRACTICE.altitudeFt,
-  };
   const status = !inRange ? "out of range" : zone ? `over ${zone.code}, can't be caught` : "in range";
   const label = `Practice plane: ${PRACTICE.airline} ${PRACTICE.aircraft}, ${distance.toFixed(1)} miles ${direction}, ${status}`;
 
@@ -213,10 +205,18 @@ export function TutorialStep({
 
         {phase === "card" && (
           <PlaneCard
-            plane={details}
+            title={PRACTICE.airline}
+            iata={PRACTICE.iata}
+            aircraft={PRACTICE.aircraft}
+            updated={`Updated ${sinceUpdate < 2 ? "just now" : `${sinceUpdate} s ago`}`}
+            block={
+              !inRange
+                ? `Its last ping was outside your ${CATCH_RANGE_MI}-mile ring. Wait for the next update.`
+                : zone
+                  ? `It's over the ${zone.code} airport zone. Planes near airports can't be caught.`
+                  : null
+            }
             headingRef={cardHeading}
-            practice
-            noCatchZone={zone ? shortName(zone) : null}
             onCatch={() => setPhase("caught")}
             onClose={() => setPhase("spot")}
           />
