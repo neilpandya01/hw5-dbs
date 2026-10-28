@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { roundPosition, type LatLon } from "./geo";
 import type { Rarity } from "./rarity";
-import { supabase } from "./supabase";
+import { describeToken, supabase } from "./supabase";
 
 // The only data layer for a person's own data, saved in Supabase:
 //   hunters   onboarding, rounded location, last active (row-level security: your own row only)
@@ -147,7 +147,12 @@ export async function loadStore(userId: string | null) {
       },
     });
   } catch (e) {
-    const problem = describe(e);
+    let problem = describe(e);
+    // 42501 "permission denied": Supabase saw this request as signed out. Say what Clerk's token
+    // contains (and drop Supabase's hint to grant access to anon, which would be the wrong fix).
+    if ((e as { code?: string })?.code === "42501") {
+      problem = `${(e as { message?: string }).message} (code 42501). Supabase treated you as signed out. ${await describeToken()}.`;
+    }
     console.error(`[store] Couldn't load your account: ${problem}`);
     if (seq === loadSeq) set({ userId, data: EMPTY, storage: "load-failed", problem });
   }

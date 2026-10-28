@@ -26,3 +26,21 @@ export function supabase(): SupabaseClient | null {
   });
   return client;
 }
+
+/**
+ * For troubleshooting while developing: what Clerk's session token tells Supabase. Supabase only
+ * treats you as signed in when the token has role "authenticated" (added by Clerk's Supabase
+ * integration) and its issuer is the Clerk domain set in Supabase's third-party auth.
+ * Shows only those two claims, never the token itself.
+ */
+export async function describeToken(): Promise<string> {
+  if (!getToken) return "no Clerk token source (not signed in yet)";
+  const token = await getToken().catch(() => null);
+  if (!token) return "Clerk returned no session token";
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) as { role?: string; iss?: string };
+    return `Clerk token: role=${payload.role ?? "MISSING"}, issuer=${payload.iss ?? "?"}`;
+  } catch {
+    return "Clerk's token couldn't be read";
+  }
+}
