@@ -21,9 +21,13 @@ const PRACTICE = {
   altitudeFt: 9500,
   heading: 70,
 };
-/** It flies past a little to one side of you, enters from outside the ring, and loops if it leaves. */
-const SPEED_MI_PER_S = 0.5;
-const START_MI = 14;
+/**
+ * It flies past a little to one side of you, enters from just outside the ring, and loops if it leaves.
+ * Real speed for a plane descending toward an airport: about 430 mph. It reaches the ring in about
+ * 12 seconds, then takes about 2.5 minutes to cross it, like a real plane would.
+ */
+const SPEED_MI_PER_S = 0.12;
+const START_MI = 11;
 const SIDE_MI = 3;
 const LOOP_S = (2 * START_MI) / SPEED_MI_PER_S;
 
