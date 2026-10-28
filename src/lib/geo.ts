@@ -3,7 +3,7 @@
 export type LatLon = { lat: number; lon: number };
 
 /** How far around you a plane can be caught. */
-export const CATCH_RANGE_MI = 10;
+export const CATCH_RANGE_MI = 5;
 
 /** 2 decimals is about 1 km: the precision we save and send anywhere. Never store an exact position. */
 export function roundCoord(n: number): number {

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 /* Color tokens. Text pairs are chosen for 4.5:1+ contrast on their background. */
 :root {
@@ -23,6 +24,9 @@
   --radar-range: #1c5d8c;
   --radar-you: #1c5d8c;
   --plane: #141a21;
+  --zone: #6b7280;
+  /* The map's "you" dot and catch range (FlightMap uses the same values). */
+  --range: #2563eb;
   /* Rarity tiers: always shown with their name, never by color alone. */
   --tier-common: #56606b;
   --tier-uncommon: #1d6b3f;
@@ -51,6 +55,8 @@
     --radar-range: #8cc8f0;
     --radar-you: #8cc8f0;
     --plane: #e8edf2;
+  --zone: #9ca3af;
+  --range: #60a5fa;
     --tier-common: #9aa6b2;
     --tier-uncommon: #7fd6a2;
     --tier-rare: #b9a6ff;
@@ -135,4 +141,60 @@ body {
   .radar-pulse {
     opacity: 0;
   }
+}
+
+/* ---- The map (Leaflet) ---- */
+.leaflet-container {
+  background: var(--radar-bg);
+  font: inherit;
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line);
+}
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--surface) 85%, transparent) !important;
+  color: var(--muted);
+}
+.leaflet-control-attribution a {
+  color: var(--accent);
+}
+
+/* Airport no-catch zone names: small, plain, readable on the grey zone. */
+.leaflet-tooltip.airport-label {
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.leaflet-tooltip.airport-label::before {
+  display: none;
+}
+
+/* Planes: a dark (or light, in dark mode) silhouette, rotated to its heading. */
+.plane-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--plane);
+  fill: currentColor;
+  border-radius: 9999px;
+}
+.plane-marker span {
+  display: flex;
+  filter: drop-shadow(0 0 1.5px var(--surface));
+}
+.plane-marker.is-faded {
+  opacity: 0.45;
+}
+.plane-marker.is-selected,
+.plane-marker:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
 }

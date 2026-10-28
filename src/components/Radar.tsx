@@ -10,9 +10,12 @@ export type RadarPlane = {
   heading: number;
   /** Read aloud and shown on hover: "Lufthansa 747-8, 6 miles northeast". */
   label: string;
-  /** Faded when out of catch range. */
-  inRange: boolean;
+  /** Faded when it can't be caught (out of range, or over an airport). */
+  catchable: boolean;
 };
+
+/** A grey no-catch zone around an airport. */
+export type RadarZone = { id: string; position: LatLon; radiusMi: number; label: string };
 
 const SIZE = 200;
 const MID = SIZE / 2;
@@ -25,13 +28,14 @@ const PLANE_PATH =
   "M0,-6 L1,-2 L6,1 L6,2.5 L1,1.2 L0.8,4 L2.5,5.4 L2.5,6.3 L0,5.6 L-2.5,6.3 L-2.5,5.4 L-0.8,4 L-1,1.2 L-6,2.5 L-6,1 L-1,-2 Z";
 
 /**
- * The map: you in the middle, your catch range as a ring, planes around you.
- * A drawing, not a street map. Everything on it is also listed in text on the page,
+ * The onboarding radar: you in the middle, your catch range as a ring, grey airport zones, planes around you.
+ * A drawing, not a street map (the live page uses FlightMap). Everything on it is also listed in text on the page,
  * so nothing depends on seeing it. Planes are buttons (Tab, then Enter or Space).
  */
 export function Radar({
   center,
   planes = [],
+  zones = [],
   selectedId,
   onSelect,
   caption,
@@ -40,6 +44,7 @@ export function Radar({
   /** null while finding you: the radar shows without the "you" dot. */
   center: LatLon | null;
   planes?: RadarPlane[];
+  zones?: RadarZone[];
   selectedId?: string | null;
   onSelect?: (id: string) => void;
   /** A short summary for screen readers: "Radar around Chicago. 2 planes in range." */
@@ -66,10 +71,32 @@ export function Radar({
         </defs>
         <circle cx={MID} cy={MID} r={RADIUS} fill="var(--radar-bg)" stroke="var(--radar-ring)" />
         <g aria-hidden="true">
-          {/* Rings every 5 miles, plus north-south and east-west lines. */}
-          {[5, 15].map((mi) => (
-            <circle key={mi} cx={MID} cy={MID} r={toPx(mi)} fill="none" stroke="var(--radar-ring)" strokeWidth="0.6" />
-          ))}
+          {/* A ring halfway to the catch range, plus north-south and east-west lines. */}
+          <circle cx={MID} cy={MID} r={toPx(CATCH_RANGE_MI / 2)} fill="none" stroke="var(--radar-ring)" strokeWidth="0.6" />
+          {/* Airport no-catch zones, cut off at the radar's edge. */}
+          <g clipPath="url(#radar-clip)">
+            {center &&
+              zones.map((z) => {
+                const { x, y } = offsetMi(center, z.position);
+                return (
+                  <g key={z.id}>
+                    <circle
+                      cx={MID + toPx(x)}
+                      cy={MID - toPx(y)}
+                      r={toPx(z.radiusMi)}
+                      fill="var(--zone)"
+                      fillOpacity="0.3"
+                      stroke="var(--zone)"
+                      strokeWidth="0.6"
+                      strokeDasharray="2 2"
+                    />
+                    <text x={MID + toPx(x)} y={MID - toPx(y) + 2} fontSize="5.5" fontWeight="600" fill="var(--ink)" textAnchor="middle">
+                      {z.label}
+                    </text>
+                  </g>
+                );
+              })}
+          </g>
           <line x1={MID} y1={MID - RADIUS} x2={MID} y2={MID + RADIUS} stroke="var(--radar-ring)" strokeWidth="0.5" />
           <line x1={MID - RADIUS} y1={MID} x2={MID + RADIUS} y2={MID} stroke="var(--radar-ring)" strokeWidth="0.5" />
           {/* The catch range. */}
@@ -138,7 +165,7 @@ export function Radar({
                 {/* A bigger invisible target, so it's easy to tap. */}
                 <circle r="10" fill="transparent" />
                 <circle className="plane-focus" r="8.5" fill="none" stroke="var(--accent)" strokeWidth="1.2" opacity={selected ? 1 : 0} />
-                <path d={PLANE_PATH} transform={`rotate(${p.heading})`} fill="var(--plane)" opacity={p.inRange ? 1 : 0.45} />
+                <path d={PLANE_PATH} transform={`rotate(${p.heading})`} fill="var(--plane)" opacity={p.catchable ? 1 : 0.45} />
               </g>
             );
           })}

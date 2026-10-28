@@ -1,0 +1,266 @@
+"use client";
+
+import type { Circle, CircleMarker, LayerGroup, Map as LeafletMap, TileLayer } from "leaflet";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { shortName, type Airport } from "@/lib/airports";
+import { CATCH_RANGE_MI, moveBy, type LatLon } from "@/lib/geo";
+
+export type MapPlane = {
+  id: string;
+  position: LatLon;
+  /** Degrees, 0 = north. A short dashed line shows where it's heading. */
+  heading: number;
+  /** Read aloud and shown on hover: "United 787-8, 3.2 miles northeast". */
+  label: string;
+  /** Faded when it can't be caught (out of range, or over an airport). */
+  catchable: boolean;
+};
+
+const MI_TO_M = 1609.34;
+/** How far ahead the "heading" line reaches. */
+const HEADING_LINE_MI = 2;
+/** Zone names stay on the map from this zoom in; further out they show on hover or tap. */
+const LABEL_ZOOM = 10;
+
+const PLANE_SVG =
+  '<svg viewBox="-8 -8 16 16" width="26" height="26" aria-hidden="true"><path d="M0,-6 L1,-2 L6,1 L6,2.5 L1,1.2 L0.8,4 L2.5,5.4 L2.5,6.3 L0,5.6 L-2.5,6.3 L-2.5,5.4 L-0.8,4 L-1,1.2 L-6,2.5 L-6,1 L-1,-2 Z"/></svg>';
+
+type Palette = { range: string; you: string; zone: string; heading: string; tiles: "light_all" | "dark_all" };
+const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", heading: "#141a21", tiles: "light_all" };
+const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", heading: "#e8edf2", tiles: "dark_all" };
+const darkQuery = () => matchMedia("(prefers-color-scheme: dark)");
+
+/**
+ * The live map (not used in onboarding, which has the simpler radar):
+ *   - you, as a blue dot, with a light blue circle for your catch range
+ *   - grey no-catch zones around airports, with their names
+ *   - planes, pointing where they're heading, with a short line showing their path ahead
+ * Zoom with the + and − buttons, the scroll wheel, a pinch, or the + and − keys. It follows you
+ * until you drag it; then "Back to me" re-centers. Street map tiles: © OpenStreetMap, © CARTO.
+ */
+export function FlightMap({
+  center,
+  airports,
+  planes = [],
+  selectedId,
+  onSelect,
+  caption,
+  children,
+}: {
+  center: LatLon | null;
+  airports: Airport[] | null;
+  planes?: MapPlane[];
+  selectedId?: string | null;
+  onSelect?: (id: string) => void;
+  /** A short summary for screen readers: "Map around Chicago. No planes in range." */
+  caption: string;
+  /** Laid over the bottom of the map, e.g. an empty-state message. */
+  children?: ReactNode;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const L = useRef<typeof import("leaflet") | null>(null);
+  const map = useRef<LeafletMap | null>(null);
+  const tiles = useRef<TileLayer | null>(null);
+  const you = useRef<{ dot: CircleMarker; range: Circle } | null>(null);
+  const zoneLayer = useRef<LayerGroup | null>(null);
+  const planeLayer = useRef<LayerGroup | null>(null);
+  const [ready, setReady] = useState(0); // bumps when the map exists or the color scheme changes
+  const [view, setView] = useState(0); // bumps after each pan or zoom (only the airport zones use it)
+  const [following, setFollowing] = useState(true);
+  const centered = useRef(false);
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
+
+  // Create the map once (Leaflet needs the browser, so it's loaded here, not on the server).
+  useEffect(() => {
+    let cancelled = false;
+    let stop = () => {};
+    void import("leaflet").then((mod) => {
+      if (cancelled || !box.current) return;
+      const leaflet = mod.default;
+      L.current = leaflet;
+      const m = leaflet.map(box.current, {
+        center: [41.88, -87.63],
+        zoom: 11,
+        minZoom: 6,
+        maxZoom: 16,
+        zoomControl: true,
+        attributionControl: true,
+      });
+      map.current = m;
+      zoneLayer.current = leaflet.layerGroup().addTo(m);
+      planeLayer.current = leaflet.layerGroup().addTo(m);
+      // Dragging means "let me look around": stop following until "Back to me".
+      m.on("dragstart", () => setFollowing(false));
+      // Zones and their labels depend on zoom and on what's in view.
+      m.on("moveend", () => setView((n) => n + 1));
+      const scheme = darkQuery();
+      const onScheme = () => setReady((n) => n + 1);
+      scheme.addEventListener("change", onScheme);
+      stop = () => scheme.removeEventListener("change", onScheme);
+      setReady((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+      stop();
+      map.current?.remove();
+      map.current = null;
+      tiles.current = null;
+      you.current = null;
+      centered.current = false;
+    };
+  }, []);
+
+  const palette = typeof window !== "undefined" && darkQuery().matches ? DARK : LIGHT;
+
+  // Street tiles, light or dark to match the page.
+  useEffect(() => {
+    const leaflet = L.current;
+    const m = map.current;
+    if (!leaflet || !m) return;
+    const url = `https://{s}.basemaps.cartocdn.com/${palette.tiles}/{z}/{x}/{y}{r}.png`;
+    if (tiles.current && tiles.current.options.className === palette.tiles) return;
+    tiles.current?.remove();
+    tiles.current = leaflet
+      .tileLayer(url, {
+        subdomains: "abcd",
+        maxZoom: 19,
+        className: palette.tiles,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      })
+      .addTo(m);
+  }, [ready, palette.tiles]);
+
+  // You and your catch range. Follows you unless you've dragged the map away.
+  useEffect(() => {
+    const leaflet = L.current;
+    const m = map.current;
+    if (!leaflet || !m || !center) return;
+    const at: [number, number] = [center.lat, center.lon];
+    if (!you.current) {
+      you.current = {
+        range: leaflet
+          .circle(at, {
+            radius: CATCH_RANGE_MI * MI_TO_M,
+            color: palette.range,
+            weight: 1.5,
+            fillColor: palette.range,
+            fillOpacity: 0.08,
+            interactive: false,
+          })
+          .addTo(m),
+        dot: leaflet
+          .circleMarker(at, { radius: 7, color: "#ffffff", weight: 2.5, fillColor: palette.you, fillOpacity: 1, interactive: false })
+          .addTo(m),
+      };
+    } else {
+      you.current.range.setLatLng(at).setStyle({ color: palette.range, fillColor: palette.range });
+      you.current.dot.setLatLng(at).setStyle({ fillColor: palette.you });
+    }
+    if (!centered.current) {
+      centered.current = true;
+      m.fitBounds(you.current.range.getBounds(), { padding: [24, 24] });
+    } else if (following && !m.getCenter().equals(at, 1e-5)) {
+      m.panTo(at);
+    }
+  }, [center, following, ready, palette.range, palette.you]);
+
+  // Airport no-catch zones in view (plus a margin), with names when zoomed in.
+  useEffect(() => {
+    const leaflet = L.current;
+    const m = map.current;
+    const layer = zoneLayer.current;
+    if (!leaflet || !m || !layer) return;
+    layer.clearLayers();
+    if (!airports) return;
+    const inView = m.getBounds().pad(0.3);
+    const labelled = m.getZoom() >= LABEL_ZOOM;
+    for (const a of airports) {
+      if (!inView.contains([a.lat, a.lon])) continue;
+      leaflet
+        .circle([a.lat, a.lon], {
+          radius: a.zoneMi * MI_TO_M,
+          color: palette.zone,
+          weight: 1,
+          dashArray: "4 4",
+          fillColor: palette.zone,
+          fillOpacity: 0.28,
+        })
+        .bindTooltip(`${shortName(a)} (${a.code}) · no catching`, {
+          permanent: labelled,
+          direction: "center",
+          className: "airport-label",
+        })
+        .addTo(layer);
+    }
+  }, [airports, ready, view, palette.zone]);
+
+  // Planes, pointing where they're heading, each a keyboard-reachable button.
+  useEffect(() => {
+    const leaflet = L.current;
+    const layer = planeLayer.current;
+    if (!leaflet || !layer) return;
+    layer.clearLayers();
+    for (const p of planes) {
+      const ahead = moveBy(
+        p.position,
+        Math.sin((p.heading * Math.PI) / 180) * HEADING_LINE_MI,
+        Math.cos((p.heading * Math.PI) / 180) * HEADING_LINE_MI,
+      );
+      leaflet
+        .polyline(
+          [
+            [p.position.lat, p.position.lon],
+            [ahead.lat, ahead.lon],
+          ],
+          { color: palette.heading, weight: 1.5, dashArray: "3 5", opacity: p.catchable ? 0.7 : 0.35, interactive: false },
+        )
+        .addTo(layer);
+      const selected = p.id === selectedId;
+      leaflet
+        .marker([p.position.lat, p.position.lon], {
+          title: p.label,
+          alt: p.label,
+          keyboard: true,
+          icon: leaflet.divIcon({
+            className: `plane-marker${selected ? " is-selected" : ""}${p.catchable ? "" : " is-faded"}`,
+            html: `<span style="transform: rotate(${p.heading}deg)">${PLANE_SVG}</span>`,
+            iconSize: [34, 34],
+            iconAnchor: [17, 17],
+          }),
+        })
+        .on("click", () => onSelectRef.current?.(p.id))
+        .addTo(layer);
+    }
+  }, [planes, selectedId, ready, palette.heading]);
+
+  function backToMe() {
+    setFollowing(true);
+    if (center && map.current) map.current.setView([center.lat, center.lon], Math.max(map.current.getZoom(), 11));
+  }
+
+  return (
+    <figure className="relative isolate overflow-hidden rounded-2xl border border-line">
+      <div ref={box} role="region" aria-label={caption} className="h-[26rem] w-full bg-surface sm:h-[30rem]" />
+      {!following && center && (
+        <button
+          type="button"
+          onClick={backToMe}
+          className="absolute top-3 right-3 z-[1000] min-h-9 rounded-lg border border-control bg-surface px-3 text-sm font-medium text-ink shadow-sm hover:bg-bg"
+        >
+          Back to me
+        </button>
+      )}
+      {children && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-8 z-[1000] flex justify-center px-6">
+          <div className="pointer-events-auto max-w-[19rem] rounded-xl border border-line bg-surface/95 px-4 py-3 text-center text-sm shadow-sm">
+            {children}
+          </div>
+        </div>
+      )}
+    </figure>
+  );
+}

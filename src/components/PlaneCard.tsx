@@ -18,22 +18,27 @@ export type PlaneDetails = {
 
 /**
  * One plane, opened from the radar or the list: who it is, how rare, how far, and Catch.
- * Catch only works while the plane is inside your catch range; otherwise the card says why.
+ * Catch only works while the plane is inside your catch range and not over an airport's no-catch zone;
+ * otherwise the card says why.
  */
 export function PlaneCard({
   plane,
   headingRef,
   practice = false,
+  noCatchZone = null,
   onCatch,
   onClose,
 }: {
   plane: PlaneDetails;
   headingRef?: RefObject<HTMLHeadingElement | null>;
   practice?: boolean;
+  /** The airport whose grey zone the plane is in, if any: "Chicago O'Hare International". */
+  noCatchZone?: string | null;
   onCatch: () => void;
   onClose: () => void;
 }) {
   const inRange = plane.distanceMi <= CATCH_RANGE_MI;
+  const catchable = inRange && !noCatchZone;
   const tier = rarityInfo[plane.rarity];
   return (
     <section aria-labelledby="plane-card-title" className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-4">
@@ -60,15 +65,17 @@ export function PlaneCard({
           <dd className="font-medium text-ink">{tier.points} points</dd>
         </div>
       </dl>
-      <p aria-live="polite" className={`text-sm ${inRange ? "text-ok" : "text-muted"}`}>
-        {inRange
-          ? practice
-            ? "It's in range. Catch it!"
-            : "In range. Catch it before it leaves!"
-          : `Out of range. Wait until it's inside your ${CATCH_RANGE_MI}-mile ring.`}
+      <p aria-live="polite" className={`text-sm ${catchable ? "text-ok" : "text-muted"}`}>
+        {!inRange
+          ? `Out of range. Wait until it's inside your ${CATCH_RANGE_MI}-mile circle.`
+          : noCatchZone
+            ? `It's over ${noCatchZone}'s grey zone. Planes near airports can't be caught.`
+            : practice
+              ? "It's in range. Catch it!"
+              : "In range. Catch it before it leaves!"}
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onCatch} disabled={!inRange}>
+        <Button onClick={onCatch} disabled={!catchable}>
           Catch
         </Button>
         <Button variant="ghost" onClick={onClose}>
