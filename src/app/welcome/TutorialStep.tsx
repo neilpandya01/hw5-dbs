@@ -3,33 +3,39 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@/components/Button";
 import { PlaneCard, type PlaneDetails } from "@/components/PlaneCard";
-import { Radar } from "@/components/Radar";
+import { Radar, type RadarZone } from "@/components/Radar";
 import { RarityBadge } from "@/components/RarityBadge";
+import { airportsNear, noCatchZoneAt, shortName, useAirports } from "@/lib/airports";
 import { CATCH_RANGE_MI, compass, distanceMi, moveBy, offsetMi, type LatLon } from "@/lib/geo";
 import { useNearestPlace } from "@/lib/nearestPlace";
 import { finishOnboarding } from "@/lib/store";
 
 type Phase = "radar" | "spot" | "card" | "caught";
 
-/** A made-up plane for practice. Practice catches aren't saved. */
+/** A made-up plane for practice, cruising at mid-high altitude. Practice catches aren't saved. */
 const PRACTICE = {
   id: "practice",
   callsign: "DLH430",
   airline: "Lufthansa",
   aircraft: "Boeing 747-8",
   rarity: "rare" as const,
-  altitudeFt: 9500,
+  altitudeFt: 24000,
   heading: 70,
 };
 /**
- * It flies past a little to one side of you, enters from just outside the ring, and loops if it leaves.
- * Real speed for a plane descending toward an airport: about 430 mph. It reaches the ring in about
- * 12 seconds, then takes about 2.5 minutes to cross it, like a real plane would.
+ * It moves like live flight data: a new position every 10 to 15 seconds, not smoothly.
+ * At about 450 mph that's a jump of 1.25 to 1.9 miles per update. It passes a little to one side
+ * of you, enters the ring after an update or two, stays catchable for about a minute and a half
+ * (6 or 7 updates), and loops back if it leaves.
  */
-const SPEED_MI_PER_S = 0.12;
-const START_MI = 11;
-const SIDE_MI = 3;
+const SPEED_MI_PER_S = 0.125;
+const START_MI = 6.5;
+const SIDE_MI = 1.2;
 const LOOP_S = (2 * START_MI) / SPEED_MI_PER_S;
+const UPDATE_MIN_S = 10;
+const UPDATE_MAX_S = 15;
+/** How far out the practice radar reaches: its edge is 1.5 times the catch range. */
+const VIEW_MI = CATCH_RANGE_MI * 1.5;
 
 function practicePosition(center: LatLon, seconds: number): LatLon {
   const h = (PRACTICE.heading * Math.PI) / 180;
@@ -39,28 +45,46 @@ function practicePosition(center: LatLon, seconds: number): LatLon {
   return moveBy(center, dir.x * along + side.x * SIDE_MI, dir.y * along + side.y * SIDE_MI);
 }
 
-/** Seconds since `running` turned on, ticking 5 times a second. Frozen in range for reduced motion. */
-function useFlightClock(running: boolean): number {
-  const [seconds, setSeconds] = useState(0);
+/**
+ * Flight time of the last position update, and when it arrived. While running, a new update
+ * lands every 10 to 15 seconds (chosen at random each time, like a real feed).
+ */
+function useFlightUpdates(running: boolean): { flightSeconds: number; updatedAt: number } {
+  const [state, setState] = useState({ flightSeconds: 0, updatedAt: 0 });
   useEffect(() => {
     if (!running) return;
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      // No movement: park it inside the ring, so it can still be caught.
-      queueMicrotask(() => setSeconds(START_MI / SPEED_MI_PER_S - 6));
-      return;
-    }
-    const start = performance.now();
-    const id = setInterval(() => setSeconds((performance.now() - start) / 1000), 200);
-    return () => clearInterval(id);
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      const wait = UPDATE_MIN_S + Math.random() * (UPDATE_MAX_S - UPDATE_MIN_S);
+      timer = setTimeout(() => {
+        setState((s) => ({ flightSeconds: s.flightSeconds + wait, updatedAt: Date.now() }));
+        schedule();
+      }, wait * 1000);
+    };
+    queueMicrotask(() => setState((s) => (s.updatedAt ? s : { ...s, updatedAt: Date.now() })));
+    schedule();
+    return () => clearTimeout(timer);
   }, [running]);
-  return seconds;
+  return state;
+}
+
+/** "Updated 4 s ago", recounted once a second. */
+function useSecondsSince(time: number): number {
+  const [now, setNow] = useState(time);
+  useEffect(() => {
+    if (!time) return;
+    queueMicrotask(() => setNow(Date.now()));
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [time]);
+  return Math.max(0, Math.round((now - time) / 1000));
 }
 
 /**
  * Step 3: a short practice round on a radar centered on you.
- *   1. Here's your radar: you in the middle, the dashed ring is your catch range.
- *   2. A practice plane flies in. Tap it (or use the list below the radar).
- *   3. Its card: who it is, how rare, how far. Catch works once it's inside the ring.
+ *   1. Here's your radar: you in the middle, the dashed ring is your catch range, grey zones are airports.
+ *   2. A practice plane flies in, moving every 10 to 15 seconds. Tap it (or use the list below).
+ *   3. Its card: who it is, how rare, how far. Catch works once it's inside the ring, not over an airport.
  *   4. Caught. Start hunting.
  */
 export function TutorialStep({
@@ -73,8 +97,11 @@ export function TutorialStep({
   onBack: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("radar");
-  const seconds = useFlightClock(phase === "spot" || phase === "card");
+  const flying = phase === "spot" || phase === "card";
+  const { flightSeconds, updatedAt } = useFlightUpdates(flying);
+  const sinceUpdate = useSecondsSince(updatedAt);
   const place = useNearestPlace(center);
+  const airports = useAirports();
   const stepHeading = useRef<HTMLHeadingElement>(null);
   const cardHeading = useRef<HTMLHeadingElement>(null);
 
@@ -88,12 +115,20 @@ export function TutorialStep({
     (phase === "card" ? cardHeading : stepHeading).current?.focus();
   }, [phase]);
 
-  const position = practicePosition(center, seconds);
+  const position = practicePosition(center, flightSeconds);
   const distance = distanceMi(center, position);
   const { x, y } = offsetMi(center, position);
   const direction = compass((Math.atan2(x, y) * 180) / Math.PI);
   const inRange = distance <= CATCH_RANGE_MI;
-  const planeVisible = phase === "spot" || phase === "card";
+  const zone = noCatchZoneAt(airports, position);
+  const catchable = inRange && !zone;
+
+  const zones: RadarZone[] = airportsNear(airports, center, VIEW_MI).map((a) => ({
+    id: a.code,
+    position: a,
+    radiusMi: a.zoneMi,
+    label: a.code,
+  }));
 
   const details: PlaneDetails = {
     callsign: PRACTICE.callsign,
@@ -104,22 +139,21 @@ export function TutorialStep({
     direction,
     altitudeFt: PRACTICE.altitudeFt,
   };
-  const label = `Practice plane: ${PRACTICE.airline} ${PRACTICE.aircraft}, ${distance.toFixed(1)} miles ${direction}, ${
-    inRange ? "in range" : "out of range"
-  }`;
+  const status = !inRange ? "out of range" : zone ? `over ${zone.code}, can't be caught` : "in range";
+  const label = `Practice plane: ${PRACTICE.airline} ${PRACTICE.aircraft}, ${distance.toFixed(1)} miles ${direction}, ${status}`;
 
   const text: Record<Phase, { title: string; body: string }> = {
     radar: {
       title: "This is your radar.",
-      body: `You're the dot in the middle${place ? `, near ${place}` : ""}. The dashed ring is your catch range: ${CATCH_RANGE_MI} miles around you.`,
+      body: `You're the dot in the middle${place ? `, near ${place}` : ""}. The dashed ring is your catch range: ${CATCH_RANGE_MI} miles around you. Grey circles are airports: planes there can't be caught.`,
     },
     spot: {
       title: "A plane is coming.",
-      body: "Planes outside the ring are faded: you can't catch them yet. Tap the plane to see who it is.",
+      body: "Like real flight data, its position updates every 10 to 15 seconds. Faded means it can't be caught yet. Tap the plane to see who it is.",
     },
     card: {
       title: "Catch it while it's in range.",
-      body: "Rarer aircraft are worth more points. Planes keep moving, so don't wait too long.",
+      body: "Rarer aircraft are worth more points. It keeps moving with each update, so don't wait too long.",
     },
     caught: {
       title: "Caught!",
@@ -142,17 +176,20 @@ export function TutorialStep({
 
         <Radar
           center={center}
-          caption={`Practice radar around you. ${planeVisible ? label : "No planes yet."}`}
-          planes={
-            planeVisible
-              ? [{ id: PRACTICE.id, position, heading: PRACTICE.heading, label, inRange }]
-              : []
-          }
+          caption={`Practice radar around you. ${flying ? label : "No planes yet."}`}
+          zones={zones}
+          planes={flying ? [{ id: PRACTICE.id, position, heading: PRACTICE.heading, label, catchable }] : []}
           selectedId={phase === "card" ? PRACTICE.id : null}
           onSelect={() => setPhase("card")}
         />
 
-        {planeVisible && phase === "spot" && (
+        {flying && (
+          <p className="text-center text-sm text-muted">
+            Position updated {sinceUpdate < 2 ? "just now" : `${sinceUpdate} s ago`} · updates every 10–15 seconds
+          </p>
+        )}
+
+        {phase === "spot" && (
           <ul aria-label="Planes on your radar" className="flex flex-col gap-2">
             <li>
               <button
@@ -165,7 +202,7 @@ export function TutorialStep({
                     {PRACTICE.airline} · <span className="font-mono">{PRACTICE.callsign}</span>
                   </span>
                   <span className="text-sm text-muted">
-                    {distance.toFixed(1)} mi {direction} · {inRange ? "in range" : "out of range"}
+                    {distance.toFixed(1)} mi {direction} · {PRACTICE.altitudeFt.toLocaleString()} ft · {status}
                   </span>
                 </span>
                 <RarityBadge rarity={PRACTICE.rarity} />
@@ -179,6 +216,7 @@ export function TutorialStep({
             plane={details}
             headingRef={cardHeading}
             practice
+            noCatchZone={zone ? shortName(zone) : null}
             onCatch={() => setPhase("caught")}
             onClose={() => setPhase("spot")}
           />

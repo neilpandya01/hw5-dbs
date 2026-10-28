@@ -10,14 +10,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Sky Hunt
 
-A plane-spotting game. Real planes flying near you show up on a radar; catch them before they leave your 10-mile range and collect every airline and aircraft type. Flows are in `flows.md`; how data moves through the system is in `docs/data-flow.md`.
+A plane-spotting game. Real planes flying near you show up on a map; catch them before they leave your 5-mile range (but not over an airport) and collect every airline and aircraft type. Flows are in `flows.md`; how data moves through the system is in `docs/data-flow.md`.
 
 This is Assignment 5 (Live Data System) for Design, Build, Ship: a worker on Railway polls a live flight source, saves only what changed to Supabase, and Supabase Realtime pushes changes to the page.
 
 ## Stack and rules
 - Next.js 16 + Tailwind CSS 4, Clerk for sign-in, Supabase for the database and Realtime, a small Node.js worker on Railway. The page deploys on Vercel.
 - The worker lives in `worker/` with its own `package.json`. It's excluded in `tsconfig.json` and `eslint.config.mjs` so the Next.js build doesn't check it. Railway's root directory is `worker/`.
-- Ask before adding npm packages beyond Clerk, Supabase, and Playwright.
+- Ask before adding npm packages beyond Clerk, Supabase, Leaflet (the map), and Playwright.
 - Keys live in `.env.local` (never committed, never read by the agent): `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and later `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Only publishable keys reach the browser. The Supabase **secret** key is only ever set in Railway's variables for the worker.
 - Check with `npm run build` and `npm run lint` before committing. Pull first: the README is sometimes edited on GitHub.
 
@@ -31,18 +31,21 @@ Location privacy: the exact position stays in the browser's memory. Only coordin
 ## Where things are
 - `src/lib/store.ts`: the only data layer for a person's own data. `useStore()` is null until it loads.
 - `src/lib/location.ts`: `locateOnce()` for onboarding; `useLiveLocation()` follows the position on the radar and saves the rounded copy when it changed enough; `problemMessage()` for blocked, timed-out, or unsupported location.
-- `src/lib/geo.ts`: rounding, distances, offsets in miles, compass names, `CATCH_RANGE_MI` (10).
+- `src/lib/geo.ts`: rounding, distances, offsets in miles, compass names, `CATCH_RANGE_MI` (5).
+- `src/lib/airports.ts`: airports with passenger service, loaded once from `public/airports.json`. Each has a grey no-catch zone (3 mi for large airports, 2 mi for medium). `noCatchZoneAt()` says whether a point is in one. Rebuild the file with `scripts/build-airports.mjs` from OurAirports' public-domain CSV (instructions at the top of the script).
 - `src/lib/rarity.ts`: tiers (common, uncommon, rare, legendary) and their points. `src/lib/collection.ts`: groups catches by airline and by aircraft type.
 - `src/lib/nearestPlace.ts`: "Near Chicago, Illinois" from BigDataCloud's free reverse-geocoding endpoint, rounded coordinates only (from Assignment 4).
-- `src/components/Radar.tsx`: the radar drawing (you, the catch ring, planes as buttons). Not a street map.
-- `src/components/PlaneCard.tsx`: one plane's details and Catch. `FeedStatus.tsx`: how fresh the flight data is (only "not connected yet" for now).
+- `src/components/FlightMap.tsx`: the live map (Leaflet, loaded in the browser only). You (blue dot), your catch range (light blue circle), airport zones (grey, named from zoom 10 in), and planes pointing where they're heading. Zoom with buttons, scroll, pinch, or +/−; follows you until dragged, then "Back to me". Tiles: CARTO light/dark from OpenStreetMap data (attribution shown on the map; free for non-commercial use).
+- `src/components/Radar.tsx`: the simpler radar drawing used only in onboarding's practice catch.
+- `src/components/PlaneCard.tsx`: one plane's details and Catch (disabled out of range or over an airport zone, saying why). `FeedStatus.tsx`: how fresh the flight data is (only "not connected yet" for now).
 - `src/proxy.ts`: Clerk middleware. Every route except `/sign-in` and `/sign-up` requires an account.
 - `src/components/AccountSync.tsx` (in the layout): loads the signed-in person's data; clears it on sign-out. `OnboardingGate.tsx` sends new people to `/welcome`.
 - Routes: `/` Radar, `/collection`, `/welcome` onboarding (`?step=overview|location|tutorial`), `/sign-in`, `/sign-up`.
 
 ## How it behaves
-- **Onboarding is required**, and so is location. `/welcome` has three steps: overview, share location (no skip; blocked or failed location explains how to fix it, with Try again), and a practice catch on a radar centered on you (skippable). Reloading lands on the step reached, never past an unanswered one.
-- **Radar** follows your position while open (stops when you leave the page), falls back to the saved location if finding you fails, and says so.
+- **Onboarding is required**, and so is location. `/welcome` has three steps: overview, share location (no skip; blocked or failed location explains how to fix it, with Try again), and a practice catch on a radar centered on you (skippable). The practice plane cruises at 24,000 ft and about 450 mph, and its position updates every 10 to 15 seconds, like the real feed. Reloading lands on the step reached, never past an unanswered one.
+- **Radar** (the home page) shows the map. It follows your position while open (stops when you leave the page), falls back to the saved location if finding you fails, and says so. If you're inside an airport's zone it explains that only planes outside the zone can be caught.
+- **No catching near airports.** Planes inside an airport's grey zone are taking off or landing; they can't be caught. When catches are saved in Supabase, the catch function must check this too, not just the page.
 - **Live flights aren't connected yet.** The radar and list show empty states, and the feed status says "not connected yet". Next: loading, fresh, stale, and down states from the worker's `runs` table.
 
 ## Next.js gotchas here

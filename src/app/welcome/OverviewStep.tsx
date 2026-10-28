@@ -22,7 +22,7 @@ export function OverviewStep({
         <ol className="flex flex-col gap-3 text-ink">
           {[
             `Watch your radar. Real flights show up as they come within ${CATCH_RANGE_MI} miles of you.`,
-            "Catch a plane before it flies out of range.",
+            "Catch a plane before it flies out of range. Planes near airports don't count.",
             "Collect every airline and aircraft type. Rare ones, like a 747 or an A380, are worth more.",
           ].map((line, i) => (
             <li key={line} className="flex items-start gap-3">
