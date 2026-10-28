@@ -26,8 +26,8 @@ const PRACTICE = {
 /**
  * It moves like live flight data: a new position every 10 to 15 seconds, not smoothly.
  * At about 450 mph that's a jump of 1.25 to 1.9 miles per update. It passes a little to one side
- * of you, enters the ring after an update or two, stays catchable for about a minute and a half
- * (6 or 7 updates), and loops back if it leaves.
+ * of you, enters the ring after an update or two, stays catchable for about 80 seconds
+ * (about 6 updates), and loops back if it leaves.
  */
 const SPEED_MI_PER_S = 0.125;
 const START_MI = 6.5;

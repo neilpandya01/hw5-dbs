@@ -50,7 +50,7 @@ From the latest row in `runs`:
 - **Loading:** before the first answer.
 - **Fresh:** the last run worked within about 3 intervals. (Idle means nobody was active yet: "Looking for planes near you…")
 - **Stale:** no successful run for 3 intervals: "Flight data is 2 min old"; old positions aren't catchable.
-- **Down:** the last run failed, no run for 5 minutes, or Supabase is unreachable: "Flight data can't be displayed right now. Come back later."
+- **Down:** the last run failed, no run for 5 minutes (the worker isn't running), Supabase is unreachable, or the Realtime connection failed: "Flight data can't be displayed right now. Come back later."
 - **Limit:** the budget pause above.
 
 ## Tables
