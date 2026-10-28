@@ -25,9 +25,17 @@ const LABEL_ZOOM = 10;
 const PLANE_SVG =
   '<svg viewBox="-8 -8 16 16" width="26" height="26" aria-hidden="true"><path d="M0,-6 L1,-2 L6,1 L6,2.5 L1,1.2 L0.8,4 L2.5,5.4 L2.5,6.3 L0,5.6 L-2.5,6.3 L-2.5,5.4 L-0.8,4 L-1,1.2 L-6,2.5 L-6,1 L-1,-2 Z"/></svg>';
 
-type Palette = { range: string; you: string; zone: string; heading: string; tiles: "light_all" | "dark_all" };
-const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", heading: "#141a21", tiles: "light_all" };
-const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", heading: "#e8edf2", tiles: "dark_all" };
+type Palette = { range: string; you: string; zone: string; heading: string; tiles: "World_Light_Gray" | "World_Dark_Gray" };
+const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", heading: "#141a21", tiles: "World_Light_Gray" };
+const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", heading: "#e8edf2", tiles: "World_Dark_Gray" };
+
+/**
+ * Street map tiles: Esri's grey "Canvas" basemaps, which need no API key (CARTO's now do).
+ * Each is two layers: the map itself, then street and place names on top.
+ */
+const tileUrl = (layer: string) =>
+  `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/${layer}/MapServer/tile/{z}/{y}/{x}`;
+const TILE_CREDIT = "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors";
 const darkQuery = () => matchMedia("(prefers-color-scheme: dark)");
 
 /**
@@ -36,7 +44,7 @@ const darkQuery = () => matchMedia("(prefers-color-scheme: dark)");
  *   - grey no-catch zones around airports, with their names
  *   - planes, pointing where they're heading, with a short line showing their path ahead
  * Zoom with the + and − buttons, the scroll wheel, a pinch, or the + and − keys. It follows you
- * until you drag it; then "Back to me" re-centers. Street map tiles: © OpenStreetMap, © CARTO.
+ * until you drag it; then "Back to me" re-centers. Street map tiles: © Esri, with OpenStreetMap data.
  */
 export function FlightMap({
   center,
@@ -60,7 +68,7 @@ export function FlightMap({
   const box = useRef<HTMLDivElement>(null);
   const L = useRef<typeof import("leaflet") | null>(null);
   const map = useRef<LeafletMap | null>(null);
-  const tiles = useRef<TileLayer | null>(null);
+  const tiles = useRef<{ style: string; layers: TileLayer[] } | null>(null);
   const you = useRef<{ dot: CircleMarker; range: Circle } | null>(null);
   const zoneLayer = useRef<LayerGroup | null>(null);
   const planeLayer = useRef<LayerGroup | null>(null);
@@ -120,18 +128,15 @@ export function FlightMap({
     const leaflet = L.current;
     const m = map.current;
     if (!leaflet || !m) return;
-    const url = `https://{s}.basemaps.cartocdn.com/${palette.tiles}/{z}/{x}/{y}{r}.png`;
-    if (tiles.current && tiles.current.options.className === palette.tiles) return;
-    tiles.current?.remove();
-    tiles.current = leaflet
-      .tileLayer(url, {
-        subdomains: "abcd",
-        maxZoom: 19,
-        className: palette.tiles,
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      })
-      .addTo(m);
+    if (tiles.current?.style === palette.tiles) return;
+    tiles.current?.layers.forEach((t) => t.remove());
+    tiles.current = {
+      style: palette.tiles,
+      layers: [
+        leaflet.tileLayer(tileUrl(`${palette.tiles}_Base`), { maxNativeZoom: 16, attribution: TILE_CREDIT }).addTo(m),
+        leaflet.tileLayer(tileUrl(`${palette.tiles}_Reference`), { maxNativeZoom: 16 }).addTo(m),
+      ],
+    };
   }, [ready, palette.tiles]);
 
   // You and your catch range. Follows you unless you've dragged the map away.

@@ -19,7 +19,7 @@ How data moves from the flight source to your screen is in [docs/data-flow.md](d
 - **Clerk** for sign-in. Every page except `/sign-in` and `/sign-up` needs an account (`src/proxy.ts`).
 - **Supabase** for the database and Realtime (coming next).
 - **Railway** for the worker, a small Node.js program in `worker/` (coming next).
-- **Map:** Leaflet with CARTO's map tiles (© OpenStreetMap contributors, © CARTO).
+- **Map:** Leaflet with Esri's grey Canvas map tiles (no API key needed; © Esri, with OpenStreetMap data).
 - **Airports:** from [OurAirports](https://ourairports.com/data/) (public domain), built into `public/airports.json` by `scripts/build-airports.mjs`.
 - **Location:** only coordinates rounded to about 1 km are ever saved. "Near Chicago, Illinois" comes from BigDataCloud's free reverse-geocoding endpoint.
 
