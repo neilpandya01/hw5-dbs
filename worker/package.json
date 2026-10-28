@@ -1,0 +1,19 @@
+{
+  "name": "sky-hunt-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Polls adsb.lol for planes near active Sky Hunt players and saves what changed to Supabase.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --env-file=.env src/index.js",
+    "once": "node --env-file=.env src/index.js --once",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0"
+  }
+}
