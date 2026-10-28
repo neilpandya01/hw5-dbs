@@ -1,4 +1,4 @@
-// Builds public/airports.json: the airports with scheduled passenger service, whose surroundings
+// Builds public/airports.json (and the worker's copy): the airports with scheduled passenger service, whose surroundings
 // are no-catch zones on the map.
 //
 // Source: OurAirports (public domain), https://ourairports.com/data/
@@ -7,7 +7,7 @@
 //
 // Output rows are compact arrays: [code, name, lat, lon, size], where size is "L" (large) or "M" (medium).
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const input = process.argv[2];
 if (!input) {
@@ -69,5 +69,9 @@ for (const line of lines.slice(1)) {
   ]);
 }
 
-writeFileSync(new URL("../public/airports.json", import.meta.url), JSON.stringify(rows));
-console.log(`Wrote ${rows.length} airports to public/airports.json`);
+// The page draws the zones; the worker marks planes inside them so they can't be caught.
+const json = JSON.stringify(rows);
+writeFileSync(new URL("../public/airports.json", import.meta.url), json);
+mkdirSync(new URL("../worker/data/", import.meta.url), { recursive: true });
+writeFileSync(new URL("../worker/data/airports.json", import.meta.url), json);
+console.log(`Wrote ${rows.length} airports to public/airports.json and worker/data/airports.json`);

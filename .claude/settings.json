@@ -1,1 +1,1 @@
-{ "permissions": { "deny": ["Read(./.env)", "Read(./.env.*)"] } }
+{ "permissions": { "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./worker/.env)", "Read(./worker/.env.*)"] } }
