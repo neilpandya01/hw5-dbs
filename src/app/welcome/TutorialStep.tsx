@@ -98,6 +98,8 @@ export function TutorialStep({
   onBack: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("radar");
+  const [finishing, setFinishing] = useState(false);
+  const [finishFailed, setFinishFailed] = useState(false);
   const flying = phase === "spot" || phase === "card";
   const { flightSeconds, updatedAt } = useFlightUpdates(flying);
   const sinceUpdate = useSecondsSince(updatedAt);
@@ -133,6 +135,14 @@ export function TutorialStep({
 
   const status = !inRange ? "out of range" : zone ? `over ${zone.code}, can't be caught` : "in range";
   const label = `Practice plane: ${PRACTICE.airline} ${PRACTICE.aircraft}, ${distance.toFixed(1)} miles ${direction}, ${status}`;
+
+  async function finish() {
+    setFinishing(true);
+    setFinishFailed(false);
+    const ok = await finishOnboarding(); // on success, the welcome flow moves on to the radar
+    setFinishing(false);
+    if (!ok) setFinishFailed(true);
+  }
 
   const text: Record<Phase, { title: string; body: string }> = {
     radar: {
@@ -223,11 +233,20 @@ export function TutorialStep({
         )}
       </section>
 
+      {finishFailed && (
+        <p role="alert" className="text-sm font-medium text-danger">
+          Couldn&apos;t save that to your account. Check your connection and try again.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         {phase === "radar" && <Button onClick={() => setPhase("spot")}>Next</Button>}
-        {phase === "caught" && <Button onClick={finishOnboarding}>Start hunting</Button>}
+        {phase === "caught" && (
+          <Button onClick={finish} disabled={finishing}>
+            Start hunting
+          </Button>
+        )}
         {phase !== "caught" && (
-          <Button variant="ghost" onClick={finishOnboarding}>
+          <Button variant="ghost" onClick={finish} disabled={finishing}>
             Skip practice
           </Button>
         )}

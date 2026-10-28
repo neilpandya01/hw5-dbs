@@ -135,32 +135,38 @@ export async function loadStore(userId: string | null) {
   }
 }
 
-async function save(change: (d: Data) => Data, write: () => PromiseLike<{ error: unknown }>) {
-  if (!snapshot || snapshot.storage === "load-failed") return;
+/**
+ * Shows the change at once, then writes it. Resolves true only if the database really changed a row:
+ * an update that row-level security filters out "succeeds" with zero rows, which counts as a failure.
+ */
+async function save(change: (d: Data) => Data, write: () => PromiseLike<{ data: unknown[] | null; error: unknown }>): Promise<boolean> {
+  if (!snapshot || snapshot.storage === "load-failed") return false;
   const before = snapshot;
   set({ ...before, data: change(before.data) });
-  const { error } = await write();
-  if (error && snapshot?.userId === before.userId) set({ ...snapshot, storage: "save-failed" });
+  const { data, error } = await write();
+  const ok = !error && Array.isArray(data) && data.length > 0;
+  if (!ok && snapshot?.userId === before.userId) set({ ...snapshot, data: before.data, storage: "save-failed" });
+  return ok;
 }
 
-/** Saves where someone is, rounded to about 1 km. The exact position is never saved. */
-export function saveLocation(p: LatLon) {
+/** Saves where someone is, rounded to about 1 km. The exact position is never saved. Resolves false if it didn't save. */
+export async function saveLocation(p: LatLon): Promise<boolean> {
   const sb = supabase();
-  if (!sb) return;
+  if (!sb) return false;
   const r = roundPosition(p);
   const now = new Date().toISOString();
   return save(
     (d) => ({ ...d, location: { ...r, savedAt: now } }),
-    () => sb.from("hunters").update({ lat: r.lat, lon: r.lon, location_at: now }).eq("user_id", snapshot!.userId),
+    () => sb.from("hunters").update({ lat: r.lat, lon: r.lon, location_at: now }).eq("user_id", snapshot!.userId).select("user_id"),
   );
 }
 
-export function finishOnboarding() {
+export async function finishOnboarding(): Promise<boolean> {
   const sb = supabase();
-  if (!sb) return;
+  if (!sb) return false;
   return save(
     (d) => ({ ...d, onboarded: true }),
-    () => sb.from("hunters").update({ onboarded: true }).eq("user_id", snapshot!.userId),
+    () => sb.from("hunters").update({ onboarded: true }).eq("user_id", snapshot!.userId).select("user_id"),
   );
 }
 

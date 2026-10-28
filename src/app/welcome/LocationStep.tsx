@@ -26,6 +26,8 @@ export function LocationStep({
 }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<LocateProblem | null>(null);
+  // The browser found you, but your account couldn't save it.
+  const [saveFailed, setSaveFailed] = useState(false);
   const place = useNearestPlace(saved);
 
   // Pages you leave are hidden, not unmounted: never come back to a stuck "Finding you…".
@@ -33,15 +35,18 @@ export function LocationStep({
 
   async function share() {
     setBusy(true);
+    setSaveFailed(false);
     const result = await locateOnce();
-    setBusy(false);
-    if (result.ok) {
-      setProblem(null);
-      saveLocation(result.position);
-      onDone();
-    } else {
+    if (!result.ok) {
+      setBusy(false);
       setProblem(result.problem);
+      return;
     }
+    setProblem(null);
+    const saved = await saveLocation(result.position);
+    setBusy(false);
+    if (saved) onDone();
+    else setSaveFailed(true);
   }
 
   return (
@@ -63,6 +68,12 @@ export function LocationStep({
           </p>
         )}
         {problem && <LocationHelp problem={problem} busy={busy} onRetry={share} />}
+        {saveFailed && (
+          <div role="alert" className="flex flex-col gap-1 rounded-xl border border-danger px-4 py-3 text-sm">
+            <p className="font-medium text-danger">We found you, but couldn&apos;t save it to your account.</p>
+            <p className="text-ink">Check your connection, reload the page, and try again. If it keeps happening, your account may not be connected to the database yet.</p>
+          </div>
+        )}
       </section>
       <div className="flex flex-wrap gap-2">
         {saved && !problem ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { problemMessage, type LocateProblem } from "@/lib/location";
+import { DEVICE_LOCATION_HELP, problemMessage, type LocateProblem } from "@/lib/location";
 import { Button } from "./Button";
 import { Spinner } from "./Page";
 
@@ -19,6 +19,13 @@ export function LocationHelp({
     <div role="alert" className="flex flex-col gap-2 rounded-xl border border-warn bg-warn-soft px-4 py-3 text-sm">
       <p className="font-medium text-warn">{title}</p>
       <p className="text-ink">{help}</p>
+      {(problem === "unavailable" || problem === "timeout") && (
+        <ul className="list-disc pl-5 text-ink">
+          {DEVICE_LOCATION_HELP.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
       {problem !== "unsupported" && (
         <Button variant="secondary" size="sm" className="self-start" onClick={onRetry} disabled={busy}>
           {busy ? (

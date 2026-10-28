@@ -91,12 +91,14 @@ export function problemMessage(problem: LocateProblem): { title: string; help: s
     case "denied":
       return {
         title: "Location is blocked for Sky Hunt.",
-        help: "Click the icon at the left of the address bar, set Location to Allow, then press Try again.",
+        help:
+          "Click the icon at the left of the address bar (a lock or sliders), set Location to Allow, then press Try again. " +
+          "If the browser stopped asking, that setting is where to turn it back on.",
       };
     case "timeout":
       return {
         title: "Couldn't find you in time.",
-        help: "Check that location services are on for this device, then press Try again.",
+        help: "Check that location is turned on for this device (see below), then press Try again.",
       };
     case "unsupported":
       return {
@@ -105,8 +107,15 @@ export function problemMessage(problem: LocateProblem): { title: string; help: s
       };
     default:
       return {
-        title: "Your location isn't available right now.",
-        help: "Check that location services are on for this device, then press Try again.",
+        title: "Your device didn't give the browser a location.",
+        help: "Location is probably turned off for this device or for your browser. Turn it on (see below), then press Try again.",
       };
   }
 }
+
+/** Where to turn location on, for the device-level problems ("unavailable" and "timeout"). */
+export const DEVICE_LOCATION_HELP = [
+  "Windows: Settings → Privacy & security → Location → turn on Location services and “Let desktop apps access your location”.",
+  "Mac: System Settings → Privacy & Security → Location Services → turn it on, and allow your browser.",
+  "Phone: allow Location for your browser in the phone's settings.",
+];
