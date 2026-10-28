@@ -33,30 +33,36 @@ flowchart TD
 
 ## Main flow
 
-> **I open Sky Hunt → a map is centered on where I am, with my 5-mile catch range in blue and airports in grey → planes near me show up → I open one and catch it before it leaves my range (and not over an airport) → it's added to my collection.**
+> **I open Sky Hunt → a map is centered on where I am, with my 5-mile catch circle in blue and airports in grey → within about 30 seconds, real planes near me appear, pointing the way they're flying → I open one: its airline and logo, aircraft type, and when it was last updated → if it's a commercial flight whose latest ping was inside my circle (and not over an airport), I catch it → it's in my collection.**
 
 ```mermaid
-flowchart LR
-  A([Open Sky Hunt]) --> R["Map, centered on me: 5-mile range, grey airport zones"]
-  R -->|location blocked or failing| P["Explains + Try again; shows my last saved location"]
-  R --> F{Live flights?}
-  F -- "Not connected yet (now)" --> E["Empty map: 'No live flights yet'"]
-  F -- "Later: planes nearby" --> O["Open a plane: airline, aircraft, rarity, distance"]
-  O -->|in range| C["Catch → added to my collection"]
-  O -->|out of range| W["'Wait until it's inside your circle'"]
-  O -->|over an airport zone| Z["'Planes near airports can't be caught'"]
+flowchart TD
+  A([Open Sky Hunt]) --> R["Map centered on me: 5-mile circle, grey airport zones"]
+  R -->|location blocked or failing| P["Explains + Try again; uses my last saved location"]
+  R --> F{Flight data?}
+  F -- "Loading" --> L["Loading flights…"]
+  F -- "Fresh (updated in the last ~1.5 min)" --> M["Planes on the map and in two lists: in my circle, nearby"]
+  F -- "Stale (a few missed updates)" --> S["'Flight data is 2 min old'; old pings can't be caught"]
+  F -- "Down" --> D["'Flight data can't be displayed right now. Come back later.'"]
+  F -- "Daily limit reached (app-wide)" --> X["'Sky Hunt has used today's flight data limit. Come back later.' + about when"]
+  M --> O["Open a plane: airline + logo, aircraft type, updated X s ago"]
+  O -->|commercial, latest ping in my circle, fresh, not over an airport| C["Catch → 'Caught!' → in my collection"]
+  O -->|otherwise| W["Says why: private/unknown, outside my circle, over an airport, ping too old, caught today"]
 ```
 
-**States (now)**
-- Loading: a skeleton, never a flash of "empty".
-- Finding you: a spinner next to the location line.
-- Following your location: "Near Chicago, Illinois · Following your location". The map follows you until you drag it; then "Back to me" re-centers. Zoom with + and −, scroll, or pinch.
-- Inside an airport zone: a note that only planes outside the grey zone can be caught.
-- Location problem: what went wrong, how to fix it, Try again; the map uses the last saved location meanwhile.
-- Flight feed: "Live flights: not connected yet", with empty states on the map and the list.
+**What's shown**
+- Planes out to 15 miles: at most 12 inside my 5-mile circle and 15 outside it, closest first.
+- Each plane points the way it's flying, with a short dashed line ahead. Faded planes can't be caught.
+- Commercial flights show their airline. Small planes, helicopters, and business jets are "Private plane"; anything without a callsign or type, or not recognized, is "Unknown aircraft". Neither can be caught.
+- Positions update about every 30 seconds (every minute on busy days), so planes jump rather than glide.
 
-**States (when the worker is connected)**
-- Loading, fresh ("Updated 12 s ago"), stale (no update for a few missed runs), and down (the worker's last run failed), from the `runs` table.
+**States**
+- Loading: a skeleton, then "Loading flights…".
+- Finding me: a spinner next to the location line. Following: "Near Chicago, Illinois · Following your location". The map follows me until I drag it; "Back to me" re-centers. Zoom with + and −, scroll, or pinch.
+- Fresh: "Live · updated 12 s ago" (plus "every minute today" when the shared budget is 75–90% used). Just arrived and nobody was active yet: "Looking for planes near you…".
+- Stale, down, and daily limit: as in the chart. Down and limit hide the planes; the map and collection still work.
+- Inside an airport zone: a note that only planes outside the grey zone can be caught.
+- A catch that fails says why, in words (from the database's check).
 
 ## Collection
 

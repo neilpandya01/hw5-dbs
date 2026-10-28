@@ -12,41 +12,53 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 A plane-spotting game. Real planes flying near you show up on a map; catch them before they leave your 5-mile range (but not over an airport) and collect every airline and aircraft type. Flows are in `flows.md`; how data moves through the system is in `docs/data-flow.md`.
 
-This is Assignment 5 (Live Data System) for Design, Build, Ship: a worker on Railway polls a live flight source, saves only what changed to Supabase, and Supabase Realtime pushes changes to the page.
+This is Assignment 5 (Live Data System) for Design, Build, Ship: a worker on Railway polls adsb.lol for planes near active players, saves only what changed to Supabase, and Supabase Realtime pushes changes to the page.
 
 ## Stack and rules
 - Next.js 16 + Tailwind CSS 4, Clerk for sign-in, Supabase for the database and Realtime, a small Node.js worker on Railway. The page deploys on Vercel.
-- The worker lives in `worker/` with its own `package.json`. It's excluded in `tsconfig.json` and `eslint.config.mjs` so the Next.js build doesn't check it. Railway's root directory is `worker/`.
+- The worker lives in `worker/` (plain JavaScript, its own `package.json`, no build step). It's excluded in `tsconfig.json` and `eslint.config.mjs` so the Next.js build doesn't check it. Railway's root directory is `worker/`.
 - Ask before adding npm packages beyond Clerk, Supabase, Leaflet (the map), and Playwright.
-- Keys live in `.env.local` (never committed, never read by the agent): `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and later `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Only publishable keys reach the browser. The Supabase **secret** key is only ever set in Railway's variables for the worker.
-- Check with `npm run build` and `npm run lint` before committing. Pull first: the README is sometimes edited on GitHub.
+- Keys (never committed, never read by the agent):
+  - `.env.local` for the page: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Only publishable keys reach the browser.
+  - `worker/.env` locally, Railway's variables in production: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`. The secret key skips row-level security; it never goes in the page or in code.
+- Check with `npm run build`, `npm run lint`, and `cd worker && npm test` before committing. Pull first: the README is sometimes edited on GitHub.
 
-## Data
-**For now**, a person's data (onboarding done, rounded location, catches) is saved in this browser's localStorage, one entry per Clerk user ID, in `src/lib/store.ts`. Supabase isn't connected yet. Pages only call the store's functions, so moving to Supabase only changes that file (and `AccountSync`, which will hand Clerk's token to Supabase as in Assignment 4).
+## Data (Supabase)
+How data moves, the daily budget, and the freshness states are in `docs/data-flow.md`. The schema, policies, and functions are in `supabase/migrations/`. `user_id` is the Clerk user ID (`auth.jwt()->>'sub'`).
 
-Planned tables (details in `docs/data-flow.md`): `spots`, `sightings`, `catches`, `runs`, `aircraft_types`, `airlines`, `routes`. `user_id` is the Clerk user ID (`auth.jwt()->>'sub'`), with row-level security on every table.
+- `hunters`: one row per person: `onboarded`, `lat`/`lon` rounded to 2 decimals (about 1 km), `location_at`, `last_active_at`. Own row only. `touch_hunter()` stamps `last_active_at` with the database's clock.
+- `sightings`: written only by the worker; keyed by `(cell, hex)`. `kind` is `commercial` | `private` | `unknown`; airline (ICAO, IATA, name), type (code, name), rarity, position, altitude, `heading` (direction of travel), `airport` (the no-catch zone it's in, if any), `seen_at` (when it was pinged). Signed-in people can read. In Realtime.
+- `runs`: one row per worker run: `ok`, `mode` (`normal` | `slow` | `paused` | `idle`), cells, requests, `requests_24h`, `daily_budget`, upserted, deleted, `rows_changed`, `resume_at`, `error`. Signed-in people can read. In Realtime (the page listens for inserts).
+- `catches`: own rows only, and only created by `catch_plane(cell, hex, lat, lon)`, which checks at the plane's last ping: commercial, under 90 s old, within 5.5 miles of the rounded location, not in an airport zone, not already caught today (same aircraft once per UTC day). Errors are codes (`OUT_OF_RANGE`, `STALE`, …) that `RadarView` explains.
 
-Location privacy: the exact position stays in the browser's memory. Only coordinates rounded to 2 decimals (about 1 km) are saved or sent anywhere, and the saved copy only updates after moving about 2 km, at most once a minute.
+Location privacy: the exact position stays in the browser's memory. Only coordinates rounded to 2 decimals are saved or sent anywhere; the saved copy updates after moving about 2 km, at most once a minute.
 
-## Where things are
-- `src/lib/store.ts`: the only data layer for a person's own data. `useStore()` is null until it loads.
-- `src/lib/location.ts`: `locateOnce()` for onboarding; `useLiveLocation()` follows the position on the radar and saves the rounded copy when it changed enough; `problemMessage()` for blocked, timed-out, or unsupported location.
-- `src/lib/geo.ts`: rounding, distances, offsets in miles, compass names, `CATCH_RANGE_MI` (5).
-- `src/lib/airports.ts`: airports with passenger service, loaded once from `public/airports.json`. Each has a grey no-catch zone (3 mi for large airports, 2 mi for medium). `noCatchZoneAt()` says whether a point is in one. Rebuild the file with `scripts/build-airports.mjs` from OurAirports' public-domain CSV (instructions at the top of the script).
-- `src/lib/rarity.ts`: tiers (common, uncommon, rare, legendary) and their points. `src/lib/collection.ts`: groups catches by airline and by aircraft type.
-- `src/lib/nearestPlace.ts`: "Near Chicago, Illinois" from BigDataCloud's free reverse-geocoding endpoint, rounded coordinates only (from Assignment 4).
-- `src/components/FlightMap.tsx`: the live map (Leaflet, loaded in the browser only). You (blue dot), your catch range (light blue circle), airport zones (grey; from zoom 10 in they show their code, e.g. "ORD", and the full name on hover or tap), and planes pointing where they're heading. Zoom with buttons, scroll, pinch, or +/−; follows you until dragged, then "Back to me". Tiles: Esri's light and dark grey Canvas basemaps, which need no API key (attribution shown on the map). CARTO's tiles now require a key, and OpenStreetMap's own tile servers block apps that don't follow their usage policy, so don't switch to either.
-- `src/components/Radar.tsx`: the simpler radar drawing used only in onboarding's practice catch.
-- `src/components/PlaneCard.tsx`: one plane's details and Catch (disabled out of range or over an airport zone, saying why). `FeedStatus.tsx`: how fresh the flight data is (only "not connected yet" for now).
-- `src/proxy.ts`: Clerk middleware. Every route except `/sign-in` and `/sign-up` requires an account.
-- `src/components/AccountSync.tsx` (in the layout): loads the signed-in person's data; clears it on sign-out. `OnboardingGate.tsx` sends new people to `/welcome`.
-- Routes: `/` Radar, `/collection`, `/welcome` onboarding (`?step=overview|location|tutorial`), `/sign-in`, `/sign-up`.
+## The worker (`worker/`)
+- `src/index.js`: the loop. Loads the last 24 h of requests and the saved planes, then runs forever (`npm start`), or once (`npm run once`).
+- `src/run.js`: one run: active hunters (last minute) → grid cells (`src/cells.js`, 0.25°; the page's `src/lib/cells.ts` must match) → mode from the budget → one request per cell (max 4, 300 ms apart) → `src/changes.js` decides what to write → upsert/delete → insert a `runs` row → log one line.
+- `src/budget.js`: 500 requests per rolling 24 h, app-wide. Under 75%: every 30 s. 75–90%: every 60 s. 90%+: paused (with an estimated `resume_at`). A 429 pauses for 5 minutes.
+- `src/classify.js`: commercial = airline-style callsign + an airline in `data/airlines.json` + an airliner type in `src/aircraft.js` (which also sets rarity). Tail-number callsigns and airline codes on non-airliners (NetJets) are private; no callsign/type, military, or unrecognized is unknown. Also marks planes in airport zones (`data/airports.json`).
+- `data/airports.json` and `data/airlines.json` are generated by `scripts/build-airports.mjs` and `scripts/build-airlines.mjs` (sources and commands at the top of each).
+- `test/`: `node --test` on a saved adsb.lol response (`test/fixtures/chicago.json`) and an in-memory stand-in for Supabase: what gets saved, only changes are rewritten, leavers are deleted, runs are recorded, budget modes, failures.
+
+## Where things are (page)
+- `src/lib/store.ts`: the only data layer for a person's own data (hunter row and catches). `useStore()` is null until it loads. `catchPlane()` calls `catch_plane()`.
+- `src/lib/supabase.ts`: the one browser client; sends the Clerk session token (set by `AccountSync`), which Realtime uses too. Publishable key only.
+- `src/lib/flights.ts`: `useFlights(cell)`: loads the cell's planes and the latest run, then listens with Realtime (insert/update filtered to the cell; deletes checked by cell); reloads on resubscribe and on returning to the tab. `useNow()` ticks the clock.
+- `src/lib/nearby.ts`: what to show (out to 15 mi; at most 12 inside the 5-mile circle and 15 outside, closest first; positions older than 2 min hidden), `catchBlock()` (why a plane can't be caught), `feedState()` (loading, fresh, stale, down, limit), names ("Private plane", "Unknown aircraft").
+- `src/lib/heartbeat.ts`: while the radar is open and visible, `touch_hunter()` every 25 s.
+- `src/lib/location.ts`: `locateOnce()` for onboarding; `useLiveLocation()` follows the position and saves the rounded copy when it changed enough.
+- `src/lib/geo.ts`: rounding, distances, offsets, compass names, `CATCH_RANGE_MI` (5). `src/lib/airports.ts`: airport zones from `public/airports.json` (3 mi large, 2 mi medium). `src/lib/rarity.ts`, `src/lib/collection.ts`: tiers and the Collection's grouping. `src/lib/nearestPlace.ts`: "Near Chicago, Illinois" (BigDataCloud).
+- `src/components/FlightMap.tsx`: the live map (Leaflet, browser only). You, your 5-mile circle, airport zones (codes from zoom 10 in, full name on hover or tap), and planes rotated to their direction with a dashed line ahead; faded when they can't be caught. Tiles: Esri's grey Canvas basemaps (no key). CARTO's tiles now require a key, and OpenStreetMap's own servers block apps that don't follow their policy, so don't switch to either.
+- `src/components/PlaneCard.tsx`: only the airline (logo via `AirlineLogo.tsx`, from pics.avs.io by IATA code), aircraft type, and "Updated X ago", plus Catch or why not. `FeedStatus.tsx`: the freshness pill and the down/limit banner.
+- `src/components/Radar.tsx`: the simple radar drawing, only for onboarding's practice catch.
+- `src/proxy.ts`: Clerk middleware; every route except `/sign-in` and `/sign-up` needs an account. `AccountSync.tsx` loads data and hands Clerk's token to Supabase. `OnboardingGate.tsx` sends new people to `/welcome`.
+- Routes: `/` Radar, `/collection`, `/welcome` (`?step=overview|location|tutorial`), `/sign-in`, `/sign-up`.
 
 ## How it behaves
-- **Onboarding is required**, and so is location. `/welcome` has three steps: overview, share location (no skip; blocked or failed location explains how to fix it, with Try again), and a practice catch on a radar centered on you (skippable). The practice plane cruises at 24,000 ft and about 450 mph, and its position updates every 10 to 15 seconds, like the real feed. Reloading lands on the step reached, never past an unanswered one.
-- **Radar** (the home page) shows the map. It follows your position while open (stops when you leave the page), falls back to the saved location if finding you fails, and says so. If you're inside an airport's zone it explains that only planes outside the zone can be caught.
-- **No catching near airports.** Planes inside an airport's grey zone are taking off or landing; they can't be caught. When catches are saved in Supabase, the catch function must check this too, not just the page.
-- **Live flights aren't connected yet.** The radar and list show empty states, and the feed status says "not connected yet". Next: loading, fresh, stale, and down states from the worker's `runs` table.
+- **Onboarding is required**, and so is location: overview, share location (no skip; blocked or failed location explains how to fix it), and a practice catch (skippable). The practice plane cruises at 24,000 ft, about 450 mph, and moves every 10 to 15 seconds like real data.
+- **Radar** follows your position while open, marks you active, and shows live planes. Freshness is always visible; when flight data is down or the daily limit is reached, planes are hidden and a banner says to come back later.
+- **Catching** needs a commercial flight whose latest ping (under 90 s old) was inside your 5-mile circle and not over an airport. Private and unknown planes show but can't be caught.
 
 ## Next.js gotchas here
 - Cache Components is on: pages you leave are hidden (React `<Activity>`), not unmounted. Don't leave buttons stuck busy; reset transient UI in a `useLayoutEffect` cleanup.
