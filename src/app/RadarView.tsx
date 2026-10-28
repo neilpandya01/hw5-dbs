@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { ButtonLink } from "@/components/Button";
 import { FeedStatus } from "@/components/FeedStatus";
 import { FlightMap } from "@/components/FlightMap";
 import { LocationHelp } from "@/components/LocationHelp";
@@ -30,7 +29,6 @@ export function RadarView() {
   if (!store) return <PageSkeleton label="Loading your map" />;
 
   const where = place ? `Near ${place}` : center ? "Your location" : "Finding you…";
-  const caught = store.data.catches.length;
   const atAirport = center ? noCatchZoneAt(airports, center) : null;
 
   return (
@@ -66,17 +64,6 @@ export function RadarView() {
         <EmptyState title="No planes in range right now.">
           <p>When a plane flies within {CATCH_RANGE_MI} miles of you, it&apos;s listed here. Open it to catch it.</p>
         </EmptyState>
-      </Section>
-
-      <Section title="Your collection">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-          <p className="text-ink">
-            {caught === 0 ? "No catches yet." : `${caught} plane${caught === 1 ? "" : "s"} caught.`}
-          </p>
-          <ButtonLink href="/collection" variant="secondary" size="sm">
-            See collection
-          </ButtonLink>
-        </div>
       </Section>
     </div>
   );

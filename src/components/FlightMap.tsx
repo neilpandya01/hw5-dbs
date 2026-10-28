@@ -19,7 +19,7 @@ export type MapPlane = {
 const MI_TO_M = 1609.34;
 /** How far ahead the "heading" line reaches. */
 const HEADING_LINE_MI = 2;
-/** Zone names stay on the map from this zoom in; further out they show on hover or tap. */
+/** Zone codes stay on the map from this zoom in; further out, zones are labelled only on hover or tap. */
 const LABEL_ZOOM = 10;
 
 const PLANE_SVG =
@@ -185,7 +185,10 @@ export function FlightMap({
     const labelled = m.getZoom() >= LABEL_ZOOM;
     for (const a of airports) {
       if (!inView.contains([a.lat, a.lon])) continue;
-      leaflet
+      // Zoomed in, each zone shows just its code ("ORD"). Hovering (or tapping) shows the full name.
+      const short = a.code;
+      const full = `${shortName(a)} (${a.code}) · no catching`;
+      const zone = leaflet
         .circle([a.lat, a.lon], {
           radius: a.zoneMi * MI_TO_M,
           color: palette.zone,
@@ -194,12 +197,16 @@ export function FlightMap({
           fillColor: palette.zone,
           fillOpacity: 0.28,
         })
-        .bindTooltip(`${shortName(a)} (${a.code}) · no catching`, {
+        .bindTooltip(labelled ? short : full, {
           permanent: labelled,
           direction: "center",
           className: "airport-label",
         })
         .addTo(layer);
+      if (labelled) {
+        zone.on("mouseover click", () => zone.setTooltipContent(full));
+        zone.on("mouseout", () => zone.setTooltipContent(short));
+      }
     }
   }, [airports, ready, view, palette.zone]);
 
