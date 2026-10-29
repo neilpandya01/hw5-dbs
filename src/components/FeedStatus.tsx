@@ -30,7 +30,7 @@ export function FeedStatus({ feed, now, shown }: { feed: Feed; now: number; show
       return (
         <p className={`${pill} border-line bg-surface text-muted`}>
           {dot("bg-ok", true)}
-          Live · looking for planes near you (first update in under 30 s)
+          Looking for planes near you…
         </p>
       );
     case "fresh":
@@ -40,7 +40,7 @@ export function FeedStatus({ feed, now, shown }: { feed: Feed; now: number; show
           <span>
             Live · updated {ago(feed.updatedAt, now)} ·{" "}
             {shown > 0 ? `${planes} within ${VIEW_MI} mi` : `no planes within ${VIEW_MI} mi right now`}
-            {feed.slow && <span className="text-muted"> · updates every minute today</span>}
+            {feed.slow && <span className="text-muted"> · updating less often to save today&apos;s limit</span>}
           </span>
         </p>
       );
@@ -64,10 +64,6 @@ export function FeedStatus({ feed, now, shown }: { feed: Feed; now: number; show
 /** The banner for when planes can't be shown at all. */
 export function FeedProblem({ feed }: { feed: Feed }) {
   if (feed.status !== "down" && feed.status !== "limit") return null;
-  const back =
-    feed.status === "limit" && feed.resumeAt
-      ? ` Updates should be back around ${new Date(feed.resumeAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`
-      : "";
   return (
     <div role="alert" className="flex flex-col gap-1 rounded-xl border border-danger bg-surface px-4 py-3 text-sm">
       <p className="font-medium text-danger">
@@ -75,7 +71,7 @@ export function FeedProblem({ feed }: { feed: Feed }) {
       </p>
       <p className="text-ink">
         {feed.status === "limit"
-          ? `Flight updates are paused for everyone until the limit resets. Come back later.${back}`
+          ? "Flight updates are paused for everyone until the limit resets. Come back later."
           : "Come back later. Your map and collection still work."}
       </p>
     </div>

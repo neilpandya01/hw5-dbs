@@ -1,14 +1,14 @@
 "use client";
 
-import type { Circle, CircleMarker, LayerGroup, Map as LeafletMap, Marker, Polyline, TileLayer } from "leaflet";
+import type { Circle, CircleMarker, LayerGroup, Map as LeafletMap, Marker, TileLayer } from "leaflet";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { shortName, type Airport } from "@/lib/airports";
-import { CATCH_RANGE_MI, moveBy, type LatLon } from "@/lib/geo";
+import { CATCH_RANGE_MI, type LatLon } from "@/lib/geo";
 
 export type MapPlane = {
   id: string;
   position: LatLon;
-  /** Direction of travel, degrees from north: the icon points that way, with a dashed line ahead. Null if unknown. */
+  /** Direction of travel, degrees from north: the icon points that way, with a short dashed line ahead. Null if unknown. */
   heading: number | null;
   /** Read aloud and shown on hover: "United 787-8, 3.2 miles northeast". */
   label: string;
@@ -17,17 +17,15 @@ export type MapPlane = {
 };
 
 const MI_TO_M = 1609.34;
-/** How far ahead the "heading" line reaches. */
-const HEADING_LINE_MI = 2;
 /** Zone codes stay on the map from this zoom in; further out, zones are labelled only on hover or tap. */
 const LABEL_ZOOM = 10;
 
 const PLANE_SVG =
   '<svg viewBox="-8 -8 16 16" width="26" height="26" aria-hidden="true"><path d="M0,-6 L1,-2 L6,1 L6,2.5 L1,1.2 L0.8,4 L2.5,5.4 L2.5,6.3 L0,5.6 L-2.5,6.3 L-2.5,5.4 L-0.8,4 L-1,1.2 L-6,2.5 L-6,1 L-1,-2 Z"/></svg>';
 
-type Palette = { range: string; you: string; zone: string; heading: string; tiles: "World_Light_Gray" | "World_Dark_Gray" };
-const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", heading: "#141a21", tiles: "World_Light_Gray" };
-const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", heading: "#e8edf2", tiles: "World_Dark_Gray" };
+type Palette = { range: string; you: string; zone: string; tiles: "World_Light_Gray" | "World_Dark_Gray" };
+const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", tiles: "World_Light_Gray" };
+const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", tiles: "World_Dark_Gray" };
 
 /**
  * Street map tiles: Esri's grey "Canvas" basemaps, which need no API key (CARTO's now do).
@@ -81,7 +79,7 @@ export function FlightMap({
   const planeLayer = useRef<LayerGroup | null>(null);
   /** Plane markers by ID, kept between updates (see the planes effect). */
   const markers = useRef(
-    new Map<string, { marker: Marker; line: Polyline | null; iconKey: string; lineKey: string; styleKey: string }>(),
+    new Map<string, { marker: Marker; iconKey: string }>(),
   );
   /** True during a zoom animation. Paths updated mid-zoom are drawn for the wrong zoom level, so updates wait. */
   const zooming = useRef(false);
@@ -233,7 +231,8 @@ export function FlightMap({
     }
   }, [airports, ready, view, palette.zone]);
 
-  // Planes, pointing where they're heading, each a keyboard-reachable button.
+  // Planes, pointing where they're heading, each a keyboard-reachable button. The dashed direction line is
+  // part of the icon itself, so the plane and its line can never drift apart (two separate layers did).
   // Markers are kept and updated in place: moved when the plane moves, re-drawn only when its direction,
   // selection, or catchability changes. Rebuilding them on every render (the page re-renders each second
   // for "updated X s ago") could swallow a click that landed mid-rebuild.
@@ -246,7 +245,7 @@ export function FlightMap({
       seen.add(p.id);
       const at: [number, number] = [p.position.lat, p.position.lon];
       const selected = p.id === selectedId;
-      const iconKey = `${p.heading ?? 0}|${selected}|${p.catchable}`;
+      const iconKey = `${p.heading ?? "none"}|${selected}|${p.catchable}`;
       let entry = markers.current.get(p.id);
       if (!entry) {
         const marker = leaflet
@@ -259,7 +258,7 @@ export function FlightMap({
           })
           .on("click", () => onSelectRef.current?.(p.id))
           .addTo(layer);
-        entry = { marker, line: null, iconKey, lineKey: "", styleKey: "" };
+        entry = { marker, iconKey };
         markers.current.set(p.id, entry);
       } else {
         const now = entry.marker.getLatLng();
@@ -276,38 +275,14 @@ export function FlightMap({
           el.setAttribute("alt", p.label);
         }
       }
-      // The dashed line ahead of it, in its direction of travel. Only touched when the plane moved or
-      // turned (or its look changed), never just because the page re-rendered.
-      if (p.heading === null) {
-        entry.line?.remove();
-        entry.line = null;
-        entry.lineKey = "";
-      } else {
-        // The same grey dashed line for every plane, selected or not.
-        const style = { color: palette.heading, opacity: selected || p.catchable ? 0.7 : 0.35, weight: 1.5 };
-        const lineKey = `${at[0]},${at[1]},${p.heading}`;
-        const styleKey = `${style.color},${style.opacity}`;
-        const rad = (p.heading * Math.PI) / 180;
-        const ahead = moveBy(p.position, Math.sin(rad) * HEADING_LINE_MI, Math.cos(rad) * HEADING_LINE_MI);
-        const path: [number, number][] = [at, [ahead.lat, ahead.lon]];
-        if (!entry.line) {
-          entry.line = leaflet.polyline(path, { ...style, dashArray: "3 5", interactive: false }).addTo(layer);
-        } else {
-          if (entry.lineKey !== lineKey) entry.line.setLatLngs(path);
-          if (entry.styleKey !== styleKey) entry.line.setStyle(style);
-        }
-        entry.lineKey = lineKey;
-        entry.styleKey = styleKey;
-      }
     }
     // Planes no longer shown.
     for (const [id, entry] of markers.current) {
       if (seen.has(id)) continue;
       entry.marker.remove();
-      entry.line?.remove();
       markers.current.delete(id);
     }
-  }, [planes, selectedId, ready, view, palette.heading]);
+  }, [planes, selectedId, ready, view]);
 
   // Bring the selected plane into view when asked (picking it from the list). If it isn't already well
   // inside the visible map, the map moves to fit both you and the plane (never zooming in), and stops
@@ -360,13 +335,15 @@ export function FlightMap({
 }
 
 /**
- * A plane's icon, rotated to its direction of travel. Selected: the same size, drawn bold in the
- * accent color (see .plane-marker.is-selected in globals.css).
+ * A plane's icon, rotated to its direction of travel, with a short dashed line ahead of its nose (when the
+ * direction is known). Line and plane are one element, rotated together. Selected: the same size, drawn
+ * bold in the accent color; the line stays grey (see .plane-marker in globals.css).
  */
 function planeIcon(leaflet: typeof import("leaflet"), p: MapPlane, selected: boolean) {
+  const trail = p.heading === null ? "" : '<span class="plane-trail"></span>';
   return leaflet.divIcon({
     className: `plane-marker${selected ? " is-selected" : ""}${p.catchable ? "" : " is-faded"}`,
-    html: `<span class="plane-icon" style="transform: rotate(${p.heading ?? 0}deg)">${PLANE_SVG}</span>`,
+    html: `<span class="plane-icon" style="transform: rotate(${p.heading ?? 0}deg)">${trail}${PLANE_SVG}</span>`,
     iconSize: [34, 34],
     iconAnchor: [17, 17],
   });

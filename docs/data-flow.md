@@ -38,8 +38,8 @@ adsb.lol allows **500 requests per rolling 24 hours** (its `x-ratelimit-limit` h
 | Used in the last 24 h | Worker | Page |
 |---|---|---|
 | Under 75% (375) | A run every 30 s | "Live · updated 12 s ago" |
-| 75% to 90% | A run every 60 s | "Live · updated … · every minute today" |
-| 90% or more (450) | No requests until enough age out | "Sky Hunt has used today's flight data limit. Come back later." with an estimated time |
+| 75% to 90% | A run every 60 s | "Live · updated … · updating less often to save today's limit" |
+| 90% or more (450) | No requests until enough age out (the worker records an estimated `resume_at`) | "Sky Hunt has used today's flight data limit. Come back later." |
 
 A refused request (HTTP 429) also pauses requests for 5 minutes. The worker counts its own requests from `runs`, so a restart doesn't reset the count.
 
@@ -53,7 +53,7 @@ From the latest row in `runs` and the page's own live (Realtime) connection, che
 - **Down:** Supabase is unreachable, the live connection has been lost for over 45 seconds, no run for 5 minutes (the worker isn't running), or the latest run failed: "Flight data can't be displayed right now. Come back later."
 - **Limit:** the budget pause above.
 - **Connecting:** the live connection is starting or reconnecting (under 45 seconds): "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are on the map.
-- **Starting:** the latest run had nobody active (you just arrived): "Live · looking for planes near you (first update in under 30 s)".
+- **Starting:** the latest run had nobody active (you just arrived): "Looking for planes near you…".
 - **Stale:** no run for 3 intervals plus 15 seconds (105 s normally): "No update for 2 min · these positions may be out of date" when planes are still shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off (after 2 minutes). Old positions aren't catchable.
 - **Fresh:** "Live · updated 12 s ago · 8 planes within 15 mi" (or "no planes within 15 mi right now").
 

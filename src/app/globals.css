@@ -24,6 +24,7 @@
   --radar-range: #1c5d8c;
   --radar-you: #1c5d8c;
   --plane: #141a21;
+  --plane-trail: #5c6570;
   --zone: #6b7280;
   /* The map's "you" dot and catch range (FlightMap uses the same values). */
   --range: #2563eb;
@@ -55,6 +56,7 @@
     --radar-range: #8cc8f0;
     --radar-you: #8cc8f0;
     --plane: #e8edf2;
+  --plane-trail: #9aa6b2;
   --zone: #9ca3af;
   --range: #60a5fa;
     --tier-common: #9aa6b2;
@@ -198,6 +200,15 @@ body {
 }
 .plane-marker.is-faded {
   opacity: 0.45;
+}
+/* The short dashed line ahead of the plane's nose, inside the rotated icon, so it always lines up. */
+.plane-trail {
+  position: absolute;
+  left: calc(50% - 0.75px);
+  bottom: calc(50% + 11px);
+  height: 30px;
+  border-left: 1.5px dashed var(--plane-trail);
+  pointer-events: none;
 }
 .plane-marker:focus-visible {
   outline: 2px solid var(--accent);

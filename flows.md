@@ -42,11 +42,11 @@ flowchart TD
   R -->|location blocked or failing| P["Explains + Try again; uses my last saved location"]
   R --> F{Flight data?}
   F -- "Loading" --> L["Loading flights…"]
-  F -- "Connecting / starting" --> K["'Connecting to live updates…' or 'looking for planes near you'"]
+  F -- "Connecting / starting" --> K["'Connecting to live updates…' or 'Looking for planes near you…'"]
   F -- "Fresh (a run in the last ~3 intervals)" --> M["Planes on the map and in two lists: in my circle, nearby"]
   F -- "Stale (a few missed updates)" --> S["'No update for 2 min' (worded for whether planes are still shown); old pings can't be caught"]
   F -- "Down" --> D["'Flight data can't be displayed right now. Come back later.'"]
-  F -- "Daily limit reached (app-wide)" --> X["'Sky Hunt has used today's flight data limit. Come back later.' + about when"]
+  F -- "Daily limit reached (app-wide)" --> X["'Sky Hunt has used today's flight data limit. Come back later.'"]
   M --> O["Open a plane: airline + logo, aircraft type, updated X s ago"]
   M --> Q["Or press Catch on its row in 'In your circle'"]
   Q --> C
@@ -56,7 +56,7 @@ flowchart TD
 
 **What's shown**
 - Planes out to 15 miles: at most 12 inside my 5-mile circle and 15 outside it, closest first.
-- Each plane points the way it's flying, with a short dashed line ahead. Faded planes can't be caught.
+- Each plane points the way it's flying, with a short dashed line ahead of its nose (part of the icon, so it always lines up). Faded planes can't be caught.
 - Commercial flights show their airline. Small planes, helicopters, and business jets are "Private plane"; anything without a callsign or type, or not recognized, is "Unknown aircraft". Neither can be caught.
 - Positions update about every 30 seconds (every minute on busy days), so planes jump rather than glide.
 
@@ -65,9 +65,10 @@ flowchart TD
 - Finding me: a spinner next to the location line. Following: "Near Chicago, Illinois · Following your location". The map follows me until I drag it; "Back to me" re-centers. Zoom with + and −, scroll, or pinch.
 - The status line above the map is the only flight-data message, worded for what's on the map:
   - Connecting: "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are shown (it reconnects on its own; after 45 seconds without it, the page says flight data is unavailable).
-  - Starting: "Live · looking for planes near you (first update in under 30 s)" when you've just arrived.
-  - Fresh: "Live · updated 12 s ago · 8 planes within 15 mi" or "… · no planes within 15 mi right now" (plus "updates every minute today" when the shared budget is 75–90% used). It stays fresh until about 3 update intervals pass with no successful run (under 2 minutes normally).
+  - Starting: "Looking for planes near you…" when you've just arrived.
+  - Fresh: "Live · updated 12 s ago · 8 planes within 15 mi" or "… · no planes within 15 mi right now" (plus "updating less often to save today's limit" when the shared budget is 75–90% used). It stays fresh until about 3 update intervals pass with no successful run (under 2 minutes normally).
   - Stale: "No update for 2 min · these positions may be out of date" while planes are shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off.
+- Messages never promise a time ("in 30 s", "back by 6 PM"); they say what's happening.
 - Stale, down, and daily limit: as in the chart, each shown once (down and limit as a banner, with no extra pill). Down also covers the worker not running at all (no run for 5 minutes) and a lost live connection. Down and limit hide the planes; the map and collection still work.
 - Inside an airport zone: a note that only planes outside the grey zone can be caught.
 - Opening a plane (on the map or in the lists) marks it on the map (the same size, drawn bold in the accent color, on top of others; its direction line stays grey) and shows its card directly below the map, before everything else, with Catch. The page scrolls only as much as needed to show the card; from the lists, it scrolls back up to the map, and if the plane isn't well in view, the map moves to show it (and you), every time you pick one. Close it with Close, or by tapping empty map.

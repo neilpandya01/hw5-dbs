@@ -81,7 +81,7 @@ export function ago(ms: number, now: number): string {
  *               the worker hasn't run in 5 minutes; or its latest run failed
  *   limit       the shared daily budget is 90%+ used: updates paused until resumeAt
  *   connecting  the live connection is (re)starting (under 45 s): what's shown may be a little behind
- *   starting    the worker's latest run had nobody active (you just arrived): your first update is coming
+ *   starting    the worker's latest run had nobody active (you just arrived): looking for planes
  *   stale       no run for 3 intervals plus 15 s (105 s normally, 195 s in slow mode)
  *   fresh       otherwise ("slow" when the budget is 75-90% used and runs come every 60 s)
  */

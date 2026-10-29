@@ -83,7 +83,7 @@ Import the repository on Vercel (Hobby plan), add the same variables as `.env.lo
 | The location step says "We found you, but couldn't save it" | Same as above, or no connection | Same as above |
 | "Flight data unavailable" | The worker isn't running (no run for 5 minutes), or its last run failed | Start the worker (or check Railway's logs for `FAILED` lines) |
 | The worker keeps logging `mode=idle` | Nobody has the Radar page open | Open the Radar page; it checks in every 25 seconds |
-| "Sky Hunt has used today's flight data limit" | 90% of adsb.lol's 500 requests per rolling 24 hours are used | Wait; the page shows about when updates return. Make sure only one worker is running. |
+| "Sky Hunt has used today's flight data limit" | 90% of adsb.lol's 500 requests per rolling 24 hours are used | Wait (it frees up gradually over 24 hours). Make sure only one worker is running. |
 | The location step says location is blocked or unavailable | Browser permission, or the device's location is off | Follow the steps shown on the page |
 
 While developing, the account banner also shows the technical reason (never on the live site).
