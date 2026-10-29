@@ -220,12 +220,14 @@ const CODES: CatchError[] = ["NOT_COMMERCIAL", "STALE", "AIRPORT_ZONE", "OUT_OF_
 
 /**
  * Catch a plane. The database checks the rules against the plane's last ping and where you are
- * (rounded there to about 1 km), and adds it to your collection.
+ * (rounded to about 1 km before sending), and adds it to your collection.
  */
 export async function catchPlane(cell: string, hex: string, me: LatLon): Promise<{ ok: true; caught: Catch } | { ok: false; error: CatchError }> {
   const sb = supabase();
   if (!sb || !snapshot) return { ok: false, error: "FAILED" };
-  const { data, error } = await sb.rpc("catch_plane", { p_cell: cell, p_hex: hex, p_lat: me.lat, p_lon: me.lon });
+  // Rounded here, before it leaves the browser: the exact position is never sent anywhere.
+  const r = roundPosition(me);
+  const { data, error } = await sb.rpc("catch_plane", { p_cell: cell, p_hex: hex, p_lat: r.lat, p_lon: r.lon });
   if (error) {
     const code = CODES.find((c) => error.message?.includes(c));
     return { ok: false, error: code ?? "FAILED" };
