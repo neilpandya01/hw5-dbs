@@ -251,7 +251,7 @@ function Legend() {
       </li>
       <li className="inline-flex items-center gap-1.5">
         <span aria-hidden="true">✈</span>
-        Points the way it&apos;s flying; faded can&apos;t be caught
+        Plane (faded: can&apos;t catch)
       </li>
     </ul>
   );

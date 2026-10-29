@@ -35,7 +35,8 @@ const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", headi
  */
 const tileUrl = (layer: string) =>
   `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/${layer}/MapServer/tile/{z}/{y}/{x}`;
-const TILE_CREDIT = "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors";
+/** Kept short; the data credits that matter stay: Esri (tiles) and OpenStreetMap (the map data). */
+const TILE_CREDIT = "&copy; Esri, OpenStreetMap";
 const darkQuery = () => matchMedia("(prefers-color-scheme: dark)");
 
 /**
@@ -98,6 +99,8 @@ export function FlightMap({
         attributionControl: true,
       });
       map.current = m;
+      // No "Leaflet" link in the corner (not required by its license), just the map data credit.
+      m.attributionControl.setPrefix(false);
       zoneLayer.current = leaflet.layerGroup().addTo(m);
       planeLayer.current = leaflet.layerGroup().addTo(m);
       // Dragging means "let me look around": stop following until "Back to me".

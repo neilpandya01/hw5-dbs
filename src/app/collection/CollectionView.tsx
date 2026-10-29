@@ -1,10 +1,12 @@
 "use client";
 
 import { useRef, useState, type KeyboardEvent } from "react";
+import { AirlineLogo } from "@/components/AirlineLogo";
 import { ButtonLink } from "@/components/Button";
 import { EmptyState, PageHeader, PageSkeleton } from "@/components/Page";
 import { RarityBadge } from "@/components/RarityBadge";
 import { byAircraft, byAirline, totalPoints, type CollectionGroup } from "@/lib/collection";
+import { rarityInfo } from "@/lib/rarity";
 import { useStore } from "@/lib/store";
 
 type View = "airlines" | "aircraft";
@@ -94,7 +96,7 @@ export function CollectionView() {
         ) : (
           <ul className="flex flex-col gap-2">
             {groups.map((g) => (
-              <GroupRow key={g.key} group={g} />
+              <GroupRow key={`${view}-${g.key}`} group={g} view={view} />
             ))}
           </ul>
         )}
@@ -103,20 +105,64 @@ export function CollectionView() {
   );
 }
 
-function GroupRow({ group }: { group: CollectionGroup }) {
+/**
+ * One airline or aircraft type. Press it to see each catch in it: the flight, the other half of the
+ * pair (its aircraft, or its airline), rarity, points, and when. The header row totals the points.
+ */
+function GroupRow({ group, view }: { group: CollectionGroup; view: View }) {
+  const [open, setOpen] = useState(false);
   const last = new Date(group.lastCaughtAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const detailsId = `catches-${view}-${group.key}`;
   return (
-    <li className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-      <div className="flex min-w-0 flex-col">
-        <span className="truncate font-medium text-ink">
-          {group.name}
-          {group.code && <span className="ml-2 font-mono text-sm text-muted">{group.code}</span>}
+    <li className="rounded-xl border border-line bg-surface">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={detailsId}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left hover:bg-bg"
+      >
+        {view === "airlines" && <AirlineLogo iata={group.iata} size="sm" />}
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate font-medium text-ink">
+            {group.name}
+            {group.code && <span className="ml-2 font-mono text-sm text-muted">{group.code}</span>}
+          </span>
+          <span className="text-sm text-muted">
+            Caught {group.count} time{group.count === 1 ? "" : "s"} · {group.points.toLocaleString()} points · last on {last}
+          </span>
         </span>
-        <span className="text-sm text-muted">
-          Caught {group.count} time{group.count === 1 ? "" : "s"} · last on {last}
-        </span>
-      </div>
-      <RarityBadge rarity={group.best} />
+        <RarityBadge rarity={group.best} />
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 20 20"
+          className={`size-4 shrink-0 text-muted transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+          fill="currentColor"
+        >
+          <path d="M5.2 7.6a.75.75 0 0 1 1.06.02L10 11.6l3.74-3.98a.75.75 0 1 1 1.1 1.02l-4.3 4.57a.75.75 0 0 1-1.08 0L5.18 8.66a.75.75 0 0 1 .02-1.06Z" />
+        </svg>
+      </button>
+      {open && (
+        <ul id={detailsId} className="flex flex-col divide-y divide-line border-t border-line">
+          {group.catches.map((c) => (
+            <li key={c.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-ink">
+                  {view === "airlines" ? (c.typeName ?? c.typeCode ?? "Unknown type") : (c.airlineName ?? "Unknown airline")}
+                  {c.callsign && <span className="ml-2 font-mono text-muted">{c.callsign}</span>}
+                </span>
+                <span className="text-muted">
+                  {new Date(c.caughtAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <RarityBadge rarity={c.rarity} />
+                <span className="w-16 text-right font-medium text-ink">+{rarityInfo[c.rarity].points} pts</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </li>
   );
 }

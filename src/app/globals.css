@@ -157,6 +157,9 @@ body {
 .leaflet-control-attribution {
   background: color-mix(in srgb, var(--surface) 85%, transparent) !important;
   color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 0 5px;
 }
 .leaflet-control-attribution a {
   color: var(--accent);

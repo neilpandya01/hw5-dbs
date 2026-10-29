@@ -61,7 +61,7 @@ flowchart TD
 - Loading: a skeleton, then "Loading flights…".
 - Finding me: a spinner next to the location line. Following: "Near Chicago, Illinois · Following your location". The map follows me until I drag it; "Back to me" re-centers. Zoom with + and −, scroll, or pinch.
 - Fresh: "Live · updated 12 s ago" (plus "every minute today" when the shared budget is 75–90% used). It stays fresh until about 3 update intervals pass with no successful run (under 2 minutes normally). Just arrived and nobody was active yet: "Looking for planes near you…".
-- Stale, down, and daily limit: as in the chart. Down also covers the worker not running at all (no run for 5 minutes) and a lost live connection. Down and limit hide the planes; the map and collection still work.
+- Stale, down, and daily limit: as in the chart, each shown once (down and limit as a banner, with no extra pill). Down also covers the worker not running at all (no run for 5 minutes) and a lost live connection. Down and limit hide the planes; the map and collection still work.
 - Inside an airport zone: a note that only planes outside the grey zone can be caught.
 - A catch that fails says why, in words (from the database's check).
 
@@ -70,5 +70,6 @@ flowchart TD
 > **I open Collection → I see my totals → I switch between Airlines and Aircraft → each shows what I've caught, rarest first.**
 
 - Totals: planes caught, airlines, aircraft types, points.
-- Airlines and Aircraft are tabs (arrow keys move between them). Each row shows the name, code, how many times caught, when last caught, and its best rarity.
+- Airlines and Aircraft are tabs (arrow keys move between them). Each row shows the name (airlines with their logo), code, how many times caught, total points, when last caught, and its best rarity.
+- Pressing a row opens its catches: each flight's callsign, its aircraft (in Airlines) or airline (in Aircraft), rarity, points earned, and when it was caught. Press again to close.
 - Empty: "No airlines yet." / "No aircraft yet.", with a button back to the radar.
