@@ -1,6 +1,6 @@
 "use client";
 
-import type { Circle, CircleMarker, LayerGroup, Map as LeafletMap, TileLayer } from "leaflet";
+import type { Circle, CircleMarker, LayerGroup, Map as LeafletMap, Marker, Polyline, TileLayer } from "leaflet";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { shortName, type Airport } from "@/lib/airports";
 import { CATCH_RANGE_MI, moveBy, type LatLon } from "@/lib/geo";
@@ -53,7 +53,9 @@ export function FlightMap({
   planes = [],
   selectedId,
   onSelect,
+  onMapClick,
   caption,
+  panel,
   children,
 }: {
   center: LatLon | null;
@@ -61,8 +63,12 @@ export function FlightMap({
   planes?: MapPlane[];
   selectedId?: string | null;
   onSelect?: (id: string) => void;
+  /** A click on the map itself (not on a plane), e.g. to close the open plane. */
+  onMapClick?: () => void;
   /** A short summary for screen readers: "Map around Chicago. No planes in range." */
   caption: string;
+  /** Shown over the bottom of the map, e.g. the open plane's card. Takes the place of `children`. */
+  panel?: ReactNode;
   /** Laid over the bottom of the map, e.g. an empty-state message. */
   children?: ReactNode;
 }) {
@@ -73,19 +79,24 @@ export function FlightMap({
   const you = useRef<{ dot: CircleMarker; range: Circle } | null>(null);
   const zoneLayer = useRef<LayerGroup | null>(null);
   const planeLayer = useRef<LayerGroup | null>(null);
+  /** Plane markers by ID, kept between updates (see the planes effect). */
+  const markers = useRef(new Map<string, { marker: Marker; line: Polyline | null; iconKey: string }>());
   const [ready, setReady] = useState(0); // bumps when the map exists or the color scheme changes
   const [view, setView] = useState(0); // bumps after each pan or zoom (only the airport zones use it)
   const [following, setFollowing] = useState(true);
   const centered = useRef(false);
   const onSelectRef = useRef(onSelect);
+  const onMapClickRef = useRef(onMapClick);
   useEffect(() => {
     onSelectRef.current = onSelect;
-  }, [onSelect]);
+    onMapClickRef.current = onMapClick;
+  }, [onSelect, onMapClick]);
 
   // Create the map once (Leaflet needs the browser, so it's loaded here, not on the server).
   useEffect(() => {
     let cancelled = false;
     let stop = () => {};
+    const planeMarkers = markers.current;
     void import("leaflet").then((mod) => {
       if (cancelled || !box.current) return;
       const leaflet = mod.default;
@@ -107,6 +118,8 @@ export function FlightMap({
       m.on("dragstart", () => setFollowing(false));
       // Zones and their labels depend on zoom and on what's in view.
       m.on("moveend", () => setView((n) => n + 1));
+      // Clicks on planes don't reach the map; this is a click on empty map.
+      m.on("click", () => onMapClickRef.current?.());
       const scheme = darkQuery();
       const onScheme = () => setReady((n) => n + 1);
       scheme.addEventListener("change", onScheme);
@@ -118,6 +131,7 @@ export function FlightMap({
       stop();
       map.current?.remove();
       map.current = null;
+      planeMarkers.clear();
       tiles.current = null;
       you.current = null;
       centered.current = false;
@@ -214,43 +228,61 @@ export function FlightMap({
   }, [airports, ready, view, palette.zone]);
 
   // Planes, pointing where they're heading, each a keyboard-reachable button.
+  // Markers are kept and updated in place: moved when the plane moves, re-drawn only when its direction,
+  // selection, or catchability changes. Rebuilding them on every render (the page re-renders each second
+  // for "updated X s ago") could swallow a click that landed mid-rebuild.
   useEffect(() => {
     const leaflet = L.current;
     const layer = planeLayer.current;
     if (!leaflet || !layer) return;
-    layer.clearLayers();
+    const seen = new Set<string>();
     for (const p of planes) {
-      if (p.heading !== null) {
-        const ahead = moveBy(
-          p.position,
-          Math.sin((p.heading * Math.PI) / 180) * HEADING_LINE_MI,
-          Math.cos((p.heading * Math.PI) / 180) * HEADING_LINE_MI,
-        );
-        leaflet
-          .polyline(
-            [
-              [p.position.lat, p.position.lon],
-              [ahead.lat, ahead.lon],
-            ],
-            { color: palette.heading, weight: 1.5, dashArray: "3 5", opacity: p.catchable ? 0.7 : 0.35, interactive: false },
-          )
-          .addTo(layer);
-      }
+      seen.add(p.id);
+      const at: [number, number] = [p.position.lat, p.position.lon];
       const selected = p.id === selectedId;
-      leaflet
-        .marker([p.position.lat, p.position.lon], {
-          title: p.label,
-          alt: p.label,
-          keyboard: true,
-          icon: leaflet.divIcon({
-            className: `plane-marker${selected ? " is-selected" : ""}${p.catchable ? "" : " is-faded"}`,
-            html: `<span style="transform: rotate(${p.heading ?? 0}deg)">${PLANE_SVG}</span>`,
-            iconSize: [34, 34],
-            iconAnchor: [17, 17],
-          }),
-        })
-        .on("click", () => onSelectRef.current?.(p.id))
-        .addTo(layer);
+      const iconKey = `${p.heading ?? 0}|${selected}|${p.catchable}`;
+      let entry = markers.current.get(p.id);
+      if (!entry) {
+        const marker = leaflet
+          .marker(at, { title: p.label, alt: p.label, keyboard: true, icon: planeIcon(leaflet, p, selected) })
+          .on("click", () => onSelectRef.current?.(p.id))
+          .addTo(layer);
+        entry = { marker, line: null, iconKey };
+        markers.current.set(p.id, entry);
+      } else {
+        const now = entry.marker.getLatLng();
+        if (now.lat !== at[0] || now.lng !== at[1]) entry.marker.setLatLng(at);
+        if (entry.iconKey !== iconKey) {
+          entry.marker.setIcon(planeIcon(leaflet, p, selected));
+          entry.iconKey = iconKey;
+        }
+        const el = entry.marker.getElement();
+        if (el && el.title !== p.label) {
+          el.title = p.label;
+          el.setAttribute("alt", p.label);
+        }
+      }
+      // The dashed line ahead of it, in its direction of travel.
+      if (p.heading === null) {
+        entry.line?.remove();
+        entry.line = null;
+      } else {
+        const rad = (p.heading * Math.PI) / 180;
+        const ahead = moveBy(p.position, Math.sin(rad) * HEADING_LINE_MI, Math.cos(rad) * HEADING_LINE_MI);
+        const path: [number, number][] = [at, [ahead.lat, ahead.lon]];
+        const style = { color: palette.heading, opacity: p.catchable ? 0.7 : 0.35 };
+        if (entry.line) entry.line.setLatLngs(path).setStyle(style);
+        else {
+          entry.line = leaflet.polyline(path, { ...style, weight: 1.5, dashArray: "3 5", interactive: false }).addTo(layer);
+        }
+      }
+    }
+    // Planes no longer shown.
+    for (const [id, entry] of markers.current) {
+      if (seen.has(id)) continue;
+      entry.marker.remove();
+      entry.line?.remove();
+      markers.current.delete(id);
     }
   }, [planes, selectedId, ready, palette.heading]);
 
@@ -271,7 +303,13 @@ export function FlightMap({
           Back to me
         </button>
       )}
-      {children && (
+      {panel ? (
+        // Over the map, so opening a plane never scrolls the page.
+        <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[1000] flex justify-center px-3">
+          <div className="pointer-events-auto w-full max-w-sm shadow-lg">{panel}</div>
+        </div>
+      ) : null}
+      {!panel && children && (
         <div className="pointer-events-none absolute inset-x-0 bottom-8 z-[1000] flex justify-center px-6">
           <div className="pointer-events-auto max-w-[19rem] rounded-xl border border-line bg-surface/95 px-4 py-3 text-center text-sm shadow-sm">
             {children}
@@ -280,4 +318,13 @@ export function FlightMap({
       )}
     </figure>
   );
+}
+
+function planeIcon(leaflet: typeof import("leaflet"), p: MapPlane, selected: boolean) {
+  return leaflet.divIcon({
+    className: `plane-marker${selected ? " is-selected" : ""}${p.catchable ? "" : " is-faded"}`,
+    html: `<span style="transform: rotate(${p.heading ?? 0}deg)">${PLANE_SVG}</span>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
 }

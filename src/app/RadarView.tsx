@@ -52,8 +52,10 @@ export function RadarView() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const cardHeading = useRef<HTMLHeadingElement>(null);
+  const mapBox = useRef<HTMLDivElement>(null);
+  // Opening a plane moves keyboard focus to its card (over the map) without jumping the page.
   useEffect(() => {
-    if (selected) cardHeading.current?.focus();
+    if (selected) cardHeading.current?.focus({ preventScroll: true });
   }, [selected]);
 
   if (!store) return <PageSkeleton label="Loading your map" />;
@@ -81,6 +83,18 @@ export function RadarView() {
     setMessage(null);
   }
 
+  /** From the list below the map: open it, and bring the map (with its card) into view. */
+  function openFromList(hex: string) {
+    open(hex);
+    const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    mapBox.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "nearest" });
+  }
+
+  function close() {
+    setSelected(null);
+    setMessage(null);
+  }
+
   async function onCatch(p: NearbyPlane) {
     if (!me) return;
     setBusy(true);
@@ -93,6 +107,28 @@ export function RadarView() {
         : { tone: "error", text: CATCH_ERRORS[result.error] },
     );
   }
+
+  const card = !selected ? null : current ? (
+    <PlaneCard
+      title={planeTitle(current)}
+      iata={current.kind === "commercial" ? current.airlineIata : null}
+      aircraft={planeType(current)}
+      updated={`Updated ${ago(current.seenAt, now)}`}
+      block={catchBlock(current, now, caughtToday)}
+      busy={busy}
+      message={message}
+      headingRef={cardHeading}
+      onCatch={() => onCatch(current)}
+      onClose={close}
+    />
+  ) : (
+    <div role="status" className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4 text-sm">
+      <span className="text-ink">{message?.tone === "ok" ? message.text : "That plane has flown out of view."}</span>
+      <button type="button" className="font-medium text-accent underline" onClick={close}>
+        Close
+      </button>
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -110,13 +146,15 @@ export function RadarView() {
         <FeedProblem feed={feed} />
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div ref={mapBox} className="flex scroll-mt-24 flex-col gap-2">
         <FlightMap
           center={me}
           airports={airports}
           planes={mapPlanes}
           selectedId={current?.hex ?? null}
           onSelect={open}
+          onMapClick={close}
+          panel={card}
           caption={`Map around you (${where}). ${inRange.length} planes in your circle, ${outside.length} more nearby.`}
         >
           {showPlanes && shown.length === 0 && (
@@ -137,27 +175,6 @@ export function RadarView() {
         )}
       </div>
 
-      {selected &&
-        (current ? (
-          <PlaneCard
-            title={planeTitle(current)}
-            iata={current.kind === "commercial" ? current.airlineIata : null}
-            aircraft={planeType(current)}
-            updated={`Updated ${ago(current.seenAt, now)}`}
-            block={catchBlock(current, now, caughtToday)}
-            busy={busy}
-            message={message}
-            headingRef={cardHeading}
-            onCatch={() => onCatch(current)}
-            onClose={() => setSelected(null)}
-          />
-        ) : (
-          <EmptyState title={message?.tone === "ok" ? message.text : "That plane has flown out of view."}>
-            <button type="button" className="font-medium text-accent underline" onClick={() => setSelected(null)}>
-              Close
-            </button>
-          </EmptyState>
-        ))}
 
       {showPlanes && (
         <>
@@ -167,12 +184,12 @@ export function RadarView() {
                 <p>Watch the map: planes heading your way will show up here.</p>
               </EmptyState>
             ) : (
-              <PlaneList planes={inRange} now={now} caughtToday={caughtToday} selected={current?.hex ?? null} onOpen={open} />
+              <PlaneList planes={inRange} now={now} caughtToday={caughtToday} selected={current?.hex ?? null} onOpen={openFromList} />
             )}
           </Section>
           {outside.length > 0 && (
             <Section title={`Nearby, outside your circle (${outside.length})`}>
-              <PlaneList planes={outside} now={now} caughtToday={caughtToday} selected={current?.hex ?? null} onOpen={open} />
+              <PlaneList planes={outside} now={now} caughtToday={caughtToday} selected={current?.hex ?? null} onOpen={openFromList} />
             </Section>
           )}
         </>
