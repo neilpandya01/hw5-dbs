@@ -64,8 +64,16 @@ export function useLiveLocation(attempt = 0): LiveLocation {
       return;
     }
     queueMicrotask(() => setState((s) => (s.status === "live" ? s : { status: "locating" })));
+    let found = false;
+    // Only the first fix has a time limit. Browsers can report "timeout" on a watch whenever no new
+    // position arrives for a while (e.g. sitting still); that must not throw away a known position.
+    const firstFix = setTimeout(() => {
+      if (!found) setState({ status: "problem", problem: "timeout" });
+    }, LOCATE_TIMEOUT_MS);
     const id = navigator.geolocation.watchPosition(
       (p) => {
+        found = true;
+        clearTimeout(firstFix);
         const position = { lat: p.coords.latitude, lon: p.coords.longitude };
         setState({ status: "live", position });
         const prev = savedRef.current;
@@ -76,10 +84,20 @@ export function useLiveLocation(attempt = 0): LiveLocation {
           saveLocation(position);
         }
       },
-      (err) => setState({ status: "problem", problem: problemOf(err) }),
-      { enableHighAccuracy: false, timeout: LOCATE_TIMEOUT_MS, maximumAge: 30_000 },
+      (err) => {
+        const problem = problemOf(err);
+        // Blocked always shows. A timeout or hiccup after we've found you keeps the last position.
+        if (problem === "denied" || !found) {
+          clearTimeout(firstFix);
+          setState({ status: "problem", problem });
+        }
+      },
+      { enableHighAccuracy: false, maximumAge: 30_000 },
     );
-    return () => navigator.geolocation.clearWatch(id);
+    return () => {
+      clearTimeout(firstFix);
+      navigator.geolocation.clearWatch(id);
+    };
   }, [attempt]);
 
   return state;

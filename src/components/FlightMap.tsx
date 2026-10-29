@@ -81,8 +81,10 @@ export function FlightMap({
   const markers = useRef(
     new Map<string, { marker: Marker; iconKey: string }>(),
   );
-  /** True during a zoom animation. Paths updated mid-zoom are drawn for the wrong zoom level, so updates wait. */
+  /** True during a zoom animation. Markers updated mid-zoom are placed for the wrong zoom level, so updates wait. */
   const zooming = useRef(false);
+  /** Which airport zones (and label style) are drawn, so a pan that changes nothing doesn't redraw them. */
+  const zonesKey = useRef("");
   const [ready, setReady] = useState(0); // bumps when the map exists or the color scheme changes
   const [view, setView] = useState(0); // bumps after each pan or zoom (only the airport zones use it)
   const [following, setFollowing] = useState(true);
@@ -112,6 +114,10 @@ export function FlightMap({
         attributionControl: true,
       });
       map.current = m;
+      // A fresh map: nothing is zooming yet, and it follows you again.
+      zooming.current = false;
+      zonesKey.current = "";
+      setFollowing(true);
       // No "Leaflet" link in the corner (not required by its license), just the map data credit.
       m.attributionControl.setPrefix(false);
       zoneLayer.current = leaflet.layerGroup().addTo(m);
@@ -189,8 +195,11 @@ export function FlightMap({
     if (!centered.current) {
       centered.current = true;
       m.fitBounds(you.current.range.getBounds(), { padding: [24, 24] });
-    } else if (following && !m.getCenter().equals(at, 1e-5)) {
-      m.panTo(at);
+    } else if (following) {
+      // Re-center only when you've visibly moved (GPS jitters by a few meters even when you sit still).
+      const size = m.getSize();
+      const p = m.latLngToContainerPoint(at);
+      if (Math.hypot(p.x - size.x / 2, p.y - size.y / 2) > 24) m.panTo(at);
     }
   }, [center, following, ready, palette.range, palette.you]);
 
@@ -200,12 +209,20 @@ export function FlightMap({
     const m = map.current;
     const layer = zoneLayer.current;
     if (!leaflet || !m || !layer) return;
-    layer.clearLayers();
-    if (!airports) return;
+    if (!airports) {
+      layer.clearLayers();
+      zonesKey.current = "";
+      return;
+    }
     const inView = m.getBounds().pad(0.3);
     const labelled = m.getZoom() >= LABEL_ZOOM;
-    for (const a of airports) {
-      if (!inView.contains([a.lat, a.lon])) continue;
+    const visible = airports.filter((a) => inView.contains([a.lat, a.lon]));
+    // Redraw only if the set of zones, their label style, or their color changed.
+    const key = `${labelled}|${palette.zone}|${visible.map((a) => a.code).join(",")}`;
+    if (key === zonesKey.current) return;
+    zonesKey.current = key;
+    layer.clearLayers();
+    for (const a of visible) {
       // Zoomed in, each zone shows just its code ("ORD"). Hovering (or tapping) shows the full name.
       const short = a.code;
       const full = `${shortName(a)} (${a.code}) · no catching`;

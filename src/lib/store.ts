@@ -233,7 +233,18 @@ export async function catchPlane(cell: string, hex: string, me: LatLon): Promise
     return { ok: false, error: code ?? "FAILED" };
   }
   const caught = toCatch(data as CatchRow);
-  if (snapshot) set({ ...snapshot, data: { ...snapshot.data, catches: [caught, ...snapshot.data.catches] } });
+  // catch_plane() also saved this rounded location; keep the page's copy the same, so the page and the
+  // worker agree on which grid square you're in.
+  if (snapshot) {
+    set({
+      ...snapshot,
+      data: {
+        ...snapshot.data,
+        location: { ...r, savedAt: caught.caughtAt },
+        catches: [caught, ...snapshot.data.catches],
+      },
+    });
+  }
   return { ok: true, caught };
 }
 
