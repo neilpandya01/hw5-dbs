@@ -180,9 +180,10 @@ body {
   display: none;
 }
 
-/* Planes: a dark (or light, in dark mode) silhouette, rotated to its heading. */
+/* Planes: a dark (or light, in dark mode) silhouette, rotated to its heading.
+   Never set `position` here: Leaflet places every marker with position: absolute, and overriding it
+   lays the planes out one after another instead of at their coordinates. */
 .plane-marker {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;

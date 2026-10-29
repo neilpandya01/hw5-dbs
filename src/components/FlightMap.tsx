@@ -54,6 +54,7 @@ export function FlightMap({
   selectedId,
   onSelect,
   onMapClick,
+  frameRequest = 0,
   caption,
   children,
 }: {
@@ -64,6 +65,8 @@ export function FlightMap({
   onSelect?: (id: string) => void;
   /** A click on the map itself (not on a plane), e.g. to close the open plane. */
   onMapClick?: () => void;
+  /** Bump this to bring the selected plane into view (e.g. after picking it from a list). */
+  frameRequest?: number;
   /** A short summary for screen readers: "Map around Chicago. No planes in range." */
   caption: string;
   /** Laid over the bottom of the map, e.g. an empty-state message. */
@@ -306,33 +309,27 @@ export function FlightMap({
     }
   }, [planes, selectedId, ready, view, palette.heading]);
 
-  // A newly selected plane that's off-screen (picked from the list) is brought into view: the map
-  // fits both you and it, never zooming in further, and stops following you ("Back to me" returns).
-  const framed = useRef<string | null>(null);
+  // Bring the selected plane into view when asked (picking it from the list). If it isn't already well
+  // inside the visible map, the map moves to fit both you and the plane (never zooming in), and stops
+  // following you, so "Back to me" appears.
+  const framedFor = useRef(0);
   useEffect(() => {
     const leaflet = L.current;
     const m = map.current;
-    if (!selectedId) {
-      framed.current = null;
-      return;
-    }
-    if (!leaflet || !m || framed.current === selectedId) return;
+    if (!leaflet || !m || !selectedId || frameRequest === framedFor.current) return;
     const plane = planes.find((p) => p.id === selectedId);
     if (!plane) return;
-    framed.current = selectedId;
+    framedFor.current = frameRequest;
     const at = leaflet.latLng(plane.position.lat, plane.position.lon);
-    if (m.getBounds().pad(-0.1).contains(at)) return; // already comfortably in view
+    if (m.getBounds().pad(-0.2).contains(at)) return; // already well in view
     queueMicrotask(() => setFollowing(false));
+    const animate = !matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (center) {
-      m.fitBounds(leaflet.latLngBounds([at, [center.lat, center.lon]]), {
-        padding: [48, 48],
-        maxZoom: m.getZoom(),
-        animate: !matchMedia("(prefers-reduced-motion: reduce)").matches,
-      });
+      m.fitBounds(leaflet.latLngBounds([at, [center.lat, center.lon]]), { padding: [56, 56], maxZoom: m.getZoom(), animate });
     } else {
-      m.panTo(at);
+      m.panTo(at, { animate });
     }
-  }, [selectedId, planes, center, ready]);
+  }, [frameRequest, selectedId, planes, center, ready]);
 
   function backToMe() {
     setFollowing(true);

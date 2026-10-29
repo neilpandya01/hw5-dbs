@@ -71,6 +71,8 @@ export function RadarView() {
   const cardBox = useRef<HTMLDivElement>(null);
   /** Opened from the list below: bring the map back into view (with the card right under it). */
   const openedFromList = useRef(false);
+  /** Bumped on every pick from the list, so the map brings that plane into view (even the same one again). */
+  const [frameRequest, setFrameRequest] = useState(0);
   // Opening a plane: move keyboard focus to its card (just below the map), then scroll only as much
   // as needed to show it. From the list, scroll back up to the map instead.
   useEffect(() => {
@@ -113,6 +115,7 @@ export function RadarView() {
   function openFromList(hex: string) {
     openedFromList.current = true;
     open(hex);
+    setFrameRequest((n) => n + 1);
   }
 
   function close() {
@@ -186,6 +189,7 @@ export function RadarView() {
           selectedId={current?.hex ?? null}
           onSelect={open}
           onMapClick={close}
+          frameRequest={frameRequest}
           caption={`Map around you (${where}). ${inRange.length} planes in your circle, ${outside.length} more nearby.`}
         />
         {/* The selected plane, right under the map and before everything else. */}
