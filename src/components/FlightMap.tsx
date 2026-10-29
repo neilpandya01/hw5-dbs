@@ -25,9 +25,10 @@ const LABEL_ZOOM = 10;
 const PLANE_SVG =
   '<svg viewBox="-8 -8 16 16" width="26" height="26" aria-hidden="true"><path d="M0,-6 L1,-2 L6,1 L6,2.5 L1,1.2 L0.8,4 L2.5,5.4 L2.5,6.3 L0,5.6 L-2.5,6.3 L-2.5,5.4 L-0.8,4 L-1,1.2 L-6,2.5 L-6,1 L-1,-2 Z"/></svg>';
 
-type Palette = { range: string; you: string; zone: string; heading: string; tiles: "World_Light_Gray" | "World_Dark_Gray" };
-const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", heading: "#141a21", tiles: "World_Light_Gray" };
-const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", heading: "#e8edf2", tiles: "World_Dark_Gray" };
+/** `selected` matches the app's accent color (--accent), so the chosen plane reads as "picked". */
+type Palette = { range: string; you: string; zone: string; heading: string; selected: string; tiles: "World_Light_Gray" | "World_Dark_Gray" };
+const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", heading: "#141a21", selected: "#1c5d8c", tiles: "World_Light_Gray" };
+const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", heading: "#e8edf2", selected: "#8cc8f0", tiles: "World_Dark_Gray" };
 
 /**
  * Street map tiles: Esri's grey "Canvas" basemaps, which need no API key (CARTO's now do).
@@ -55,7 +56,6 @@ export function FlightMap({
   onSelect,
   onMapClick,
   caption,
-  panel,
   children,
 }: {
   center: LatLon | null;
@@ -67,8 +67,6 @@ export function FlightMap({
   onMapClick?: () => void;
   /** A short summary for screen readers: "Map around Chicago. No planes in range." */
   caption: string;
-  /** Shown over the bottom of the map, e.g. the open plane's card. Takes the place of `children`. */
-  panel?: ReactNode;
   /** Laid over the bottom of the map, e.g. an empty-state message. */
   children?: ReactNode;
 }) {
@@ -244,7 +242,13 @@ export function FlightMap({
       let entry = markers.current.get(p.id);
       if (!entry) {
         const marker = leaflet
-          .marker(at, { title: p.label, alt: p.label, keyboard: true, icon: planeIcon(leaflet, p, selected) })
+          .marker(at, {
+            title: p.label,
+            alt: p.label,
+            keyboard: true,
+            icon: planeIcon(leaflet, p, selected),
+            zIndexOffset: selected ? 1000 : 0,
+          })
           .on("click", () => onSelectRef.current?.(p.id))
           .addTo(layer);
         entry = { marker, line: null, iconKey };
@@ -254,6 +258,8 @@ export function FlightMap({
         if (now.lat !== at[0] || now.lng !== at[1]) entry.marker.setLatLng(at);
         if (entry.iconKey !== iconKey) {
           entry.marker.setIcon(planeIcon(leaflet, p, selected));
+          // The selected plane is drawn on top of any it overlaps.
+          entry.marker.setZIndexOffset(selected ? 1000 : 0);
           entry.iconKey = iconKey;
         }
         const el = entry.marker.getElement();
@@ -270,10 +276,13 @@ export function FlightMap({
         const rad = (p.heading * Math.PI) / 180;
         const ahead = moveBy(p.position, Math.sin(rad) * HEADING_LINE_MI, Math.cos(rad) * HEADING_LINE_MI);
         const path: [number, number][] = [at, [ahead.lat, ahead.lon]];
-        const style = { color: palette.heading, opacity: p.catchable ? 0.7 : 0.35 };
+        // The selected plane's line is in the accent color and bolder, so its path stands out.
+        const style = selected
+          ? { color: palette.selected, opacity: 0.95, weight: 2.5 }
+          : { color: palette.heading, opacity: p.catchable ? 0.7 : 0.35, weight: 1.5 };
         if (entry.line) entry.line.setLatLngs(path).setStyle(style);
         else {
-          entry.line = leaflet.polyline(path, { ...style, weight: 1.5, dashArray: "3 5", interactive: false }).addTo(layer);
+          entry.line = leaflet.polyline(path, { ...style, dashArray: "3 5", interactive: false }).addTo(layer);
         }
       }
     }
@@ -284,7 +293,7 @@ export function FlightMap({
       entry.line?.remove();
       markers.current.delete(id);
     }
-  }, [planes, selectedId, ready, palette.heading]);
+  }, [planes, selectedId, ready, palette.heading, palette.selected]);
 
   function backToMe() {
     setFollowing(true);
@@ -303,13 +312,7 @@ export function FlightMap({
           Back to me
         </button>
       )}
-      {panel ? (
-        // Over the map, so opening a plane never scrolls the page.
-        <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[1000] flex justify-center px-3">
-          <div className="pointer-events-auto w-full max-w-sm shadow-lg">{panel}</div>
-        </div>
-      ) : null}
-      {!panel && children && (
+      {children && (
         <div className="pointer-events-none absolute inset-x-0 bottom-8 z-[1000] flex justify-center px-6">
           <div className="pointer-events-auto max-w-[19rem] rounded-xl border border-line bg-surface/95 px-4 py-3 text-center text-sm shadow-sm">
             {children}
@@ -320,11 +323,16 @@ export function FlightMap({
   );
 }
 
+/**
+ * A plane's icon, rotated to its direction of travel. Selected: bigger, in the accent color, on a
+ * highlighted disc with a soft pulsing ring (see .plane-marker in globals.css).
+ */
 function planeIcon(leaflet: typeof import("leaflet"), p: MapPlane, selected: boolean) {
+  const size = selected ? 48 : 34;
   return leaflet.divIcon({
     className: `plane-marker${selected ? " is-selected" : ""}${p.catchable ? "" : " is-faded"}`,
-    html: `<span style="transform: rotate(${p.heading ?? 0}deg)">${PLANE_SVG}</span>`,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    html: `<span class="plane-halo"></span><span class="plane-icon" style="transform: rotate(${p.heading ?? 0}deg)">${PLANE_SVG}</span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }

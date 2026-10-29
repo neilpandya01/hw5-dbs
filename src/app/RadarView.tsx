@@ -68,9 +68,18 @@ export function RadarView() {
     if (logoCodes) preloadLogos(logoCodes.split(","));
   }, [logoCodes]);
 
-  // Opening a plane moves keyboard focus to its card (over the map) without jumping the page.
+  const cardBox = useRef<HTMLDivElement>(null);
+  /** Opened from the list below: bring the map back into view (with the card right under it). */
+  const openedFromList = useRef(false);
+  // Opening a plane: move keyboard focus to its card (just below the map), then scroll only as much
+  // as needed to show it. From the list, scroll back up to the map instead.
   useEffect(() => {
-    if (selected) cardHeading.current?.focus({ preventScroll: true });
+    if (!selected) return;
+    cardHeading.current?.focus({ preventScroll: true });
+    const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    if (openedFromList.current) mapBox.current?.scrollIntoView({ behavior, block: "start" });
+    else cardBox.current?.scrollIntoView({ behavior, block: "nearest" });
+    openedFromList.current = false;
   }, [selected]);
 
   if (!store) return <PageSkeleton label="Loading your map" />;
@@ -101,9 +110,8 @@ export function RadarView() {
 
   /** From the list below the map: open it, and bring the map (with its card) into view. */
   function openFromList(hex: string) {
+    openedFromList.current = true;
     open(hex);
-    const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
-    mapBox.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "nearest" });
   }
 
   function close() {
@@ -177,7 +185,6 @@ export function RadarView() {
           selectedId={current?.hex ?? null}
           onSelect={open}
           onMapClick={close}
-          panel={card}
           caption={`Map around you (${where}). ${inRange.length} planes in your circle, ${outside.length} more nearby.`}
         >
           {showPlanes && shown.length === 0 && (
@@ -189,6 +196,12 @@ export function RadarView() {
             </>
           )}
         </FlightMap>
+        {/* The selected plane, right under the map and before everything else. */}
+        {card && (
+          <div ref={cardBox} className="scroll-mb-6">
+            {card}
+          </div>
+        )}
         <Legend />
         {atAirport && (
           <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm text-ink">

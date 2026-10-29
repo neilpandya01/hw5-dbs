@@ -182,6 +182,7 @@ body {
 
 /* Planes: a dark (or light, in dark mode) silhouette, rotated to its heading. */
 .plane-marker {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -189,15 +190,61 @@ body {
   fill: currentColor;
   border-radius: 9999px;
 }
-.plane-marker span {
+.plane-icon {
+  position: relative;
   display: flex;
   filter: drop-shadow(0 0 1.5px var(--surface));
 }
 .plane-marker.is-faded {
   opacity: 0.45;
 }
-.plane-marker.is-selected,
 .plane-marker:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 0;
+}
+
+/* The selected plane: bigger, accent-colored, on a highlighted disc with a soft pulsing ring. */
+.plane-halo {
+  display: none;
+}
+.plane-marker.is-selected {
+  color: var(--accent);
+  opacity: 1;
+}
+.plane-marker.is-selected .plane-icon svg {
+  width: 32px;
+  height: 32px;
+}
+.plane-marker.is-selected .plane-halo {
+  display: block;
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+}
+.plane-marker.is-selected .plane-halo::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 9999px;
+  border: 2px solid var(--accent);
+  animation: plane-ring 1.8s ease-out infinite;
+}
+@keyframes plane-ring {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plane-marker.is-selected .plane-halo::after {
+    animation: none;
+    opacity: 0;
+  }
 }
