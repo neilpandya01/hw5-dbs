@@ -1,17 +1,18 @@
-import { readFileSync } from "node:fs";
+import airlines from "../data/airlines.json" with { type: "json" };
+import airports from "../data/airports.json" with { type: "json" };
 import { AIRLINER_TYPES } from "./aircraft.js";
 import { distanceMi } from "./geo.js";
 
 // Turns one aircraft from adsb.lol into a `sightings` row: who it is, whether it's a commercial
 // flight (the only kind you can catch), and whether it's over an airport's no-catch zone.
 
-const readJson = (file) => JSON.parse(readFileSync(new URL(`../data/${file}`, import.meta.url), "utf8"));
+// The data files are imported (not read from disk) so they're bundled with the Edge Function.
 
 /** ICAO airline code → [name, IATA code or null]. Built by scripts/build-airlines.mjs. */
-const AIRLINES = readJson("airlines.json");
+const AIRLINES = airlines;
 
 /** [code, name, lat, lon, "L" | "M"]. Built by scripts/build-airports.mjs (same file the page uses). */
-const AIRPORTS = readJson("airports.json").map(([code, , lat, lon, size]) => ({
+const AIRPORTS = airports.map(([code, , lat, lon, size]) => ({
   code,
   lat,
   lon,

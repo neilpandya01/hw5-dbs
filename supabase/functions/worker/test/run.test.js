@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { Budget } from "../src/budget.js";
-import { runOnce } from "../src/run.js";
+import { COOLDOWN_MS, loadState, runOnce } from "../src/run.js";
 import { RateLimited } from "../src/source.js";
 
 // Runs the worker against the saved adsb.lol response and an in-memory stand-in for Supabase,
 // and checks what it saves: only what changed, planes that leave are deleted, every run is recorded.
+// The Edge Function keeps nothing between calls, so the last tests rebuild the state from the
+// stand-in database before every run, the way each Cron call does.
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/chicago.json", import.meta.url), "utf8"));
 const CHICAGO = { lat: 41.88, lon: -87.63 }; // a hunter downtown (cell 167_-351)
@@ -31,6 +33,18 @@ function fakeDb({ hunters = [CHICAGO] } = {}) {
     async insertRun(run) {
       db.runs.push(run);
     },
+    async loadSightings() {
+      return [...sightings.values()].map((r) => ({ ...r }));
+    },
+    async requestHistory(sinceIso) {
+      return db.runs
+        .filter((r) => r.requests > 0 && r.started_at >= sinceIso)
+        .map((r) => ({ at: Date.parse(r.started_at), requests: r.requests }));
+    },
+    async lastRateLimitedAt(sinceIso) {
+      const hits = db.runs.filter((r) => r.started_at >= sinceIso && /HTTP 429/.test(r.error ?? ""));
+      return hits.length ? Date.parse(hits.at(-1).started_at) : null;
+    },
   };
   return db;
 }
@@ -51,7 +65,7 @@ function setup({ response = fixture, hunters, budget = new Budget(500, []) } = {
     sleep: async () => {},
     log: () => {},
   };
-  const state = { saved: new Map(), budget, cooldownUntil: 0 };
+  const state = { saved: new Map(), budget, cooldownUntil: 0, lastRequestAt: 0 };
   return {
     db,
     state,
@@ -64,7 +78,7 @@ function setup({ response = fixture, hunters, budget = new Budget(500, []) } = {
 
 test("first run saves every plane in the air and records the run", async () => {
   const t = setup();
-  const { run, waitS } = await runOnce(t.state, t.deps);
+  const { run } = await runOnce(t.state, t.deps);
   assert.equal(run.ok, true);
   assert.equal(run.mode, "normal");
   assert.equal(run.cells, 1);
@@ -74,7 +88,6 @@ test("first run saves every plane in the air and records the run", async () => {
   assert.equal(run.rows_changed, 44);
   assert.equal(t.db.sightings.size, 44);
   assert.equal(t.db.runs.length, 1);
-  assert.equal(waitS, 30);
 });
 
 test("an unchanged response 30 seconds later writes nothing", async () => {
@@ -136,7 +149,17 @@ test("75-90% of the daily budget slows to every 60 s; 90%+ pauses with no reques
   const slow = setup({ budget: new Budget(500, [{ at: now - 3600_000, requests: 400 }]) });
   const a = await runOnce(slow.state, slow.deps);
   assert.equal(a.run.mode, "slow");
-  assert.equal(a.waitS, 60);
+  assert.equal(a.run.requests, 1);
+  // Cron calls again 30 s later: still slow, so this run skips its request.
+  slow.advance(30_000);
+  const a2 = await runOnce(slow.state, slow.deps);
+  assert.equal(a2.run.mode, "slow");
+  assert.equal(a2.run.requests, 0);
+  assert.equal(a2.run.deleted, 0); // skipped, not emptied
+  // 60 s after the last request, it asks again.
+  slow.advance(30_000);
+  const a3 = await runOnce(slow.state, slow.deps);
+  assert.equal(a3.run.requests, 1);
 
   const paused = setup({ budget: new Budget(500, [{ at: now - 3600_000, requests: 460 }]) });
   const b = await runOnce(paused.state, paused.deps);
@@ -168,4 +191,48 @@ test("a 429 from adsb.lol pauses requests for a cooldown", async () => {
   const second = await runOnce(t.state, t.deps);
   assert.equal(second.run.mode, "paused");
   assert.equal(t.calls(), 1);
+});
+
+// Like the Edge Function: every run starts from what the database says.
+async function freshRun(t) {
+  const state = await loadState(t.db, t.deps.now());
+  return runOnce(state, t.deps);
+}
+
+test("fresh state each run: an unchanged response writes nothing, and the request count carries over", async () => {
+  const t = setup();
+  const first = await freshRun(t);
+  assert.equal(first.run.upserted, 44);
+  t.advance(30_000);
+  const second = await freshRun(t);
+  assert.equal(second.run.rows_changed, 0);
+  assert.equal(second.run.requests_24h, 2);
+});
+
+test("fresh state each run: a 429 in an earlier run keeps requests paused for the cooldown", async () => {
+  const t = setup();
+  t.respond(new RateLimited());
+  await freshRun(t);
+  t.respond(fixture);
+  t.advance(30_000);
+  const paused = await freshRun(t);
+  assert.equal(paused.run.mode, "paused");
+  assert.equal(t.calls(), 1);
+  t.advance(COOLDOWN_MS);
+  const back = await freshRun(t);
+  assert.equal(back.run.mode, "normal");
+  assert.equal(t.calls(), 2);
+});
+
+test("if the saved state can't be read, the run makes no requests and is recorded as failed", async () => {
+  const t = setup();
+  t.db.loadSightings = async () => {
+    throw new Error("Supabase, loading sightings: timeout");
+  };
+  const { run } = await freshRun(t);
+  assert.equal(run.ok, false);
+  assert.match(run.error, /loading sightings/);
+  assert.equal(run.requests, 0);
+  assert.equal(t.calls(), 0);
+  assert.equal(t.db.runs.length, 1);
 });

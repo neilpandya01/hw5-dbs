@@ -12,17 +12,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 A plane-spotting game. Real planes flying near you show up on a map; catch them before they leave your 5-mile range (but not over an airport) and collect every airline and aircraft type. Flows are in `flows.md`; how data moves through the system is in `docs/data-flow.md`.
 
-This is Assignment 5 (Live Data System) for Design, Build, Ship: a worker on Railway polls adsb.lol for planes near active players, saves only what changed to Supabase, and Supabase Realtime pushes changes to the page.
+This is Assignment 5 (Live Data System) for Design, Build, Ship: a Supabase Edge Function, called every 30 seconds by Supabase Cron, polls adsb.lol for planes near active players, saves only what changed to Supabase, and Supabase Realtime pushes changes to the page. Everything runs on Vercel, Supabase, and Clerk (no Railway).
 
 ## Stack and rules
-- Next.js 16 + Tailwind CSS 4, Clerk for sign-in, Supabase for the database and Realtime, a small Node.js worker on Railway. The page deploys on Vercel.
-- The worker lives in `worker/` (plain JavaScript, its own `package.json`, no build step). It's excluded in `tsconfig.json` and `eslint.config.mjs` so the Next.js build doesn't check it. Railway's root directory is `worker/`.
+- Next.js 16 + Tailwind CSS 4, Clerk for sign-in, Supabase for the database, Realtime, and the worker (an Edge Function run by Supabase Cron). The page deploys on Vercel.
+- The worker lives in `supabase/functions/worker/` (Deno on Supabase: `index.ts` is the entry, the logic is plain JavaScript in `src/` so Node can test it; `package.json` there only marks it as ES modules for the tests). The whole `supabase/` folder is excluded in `tsconfig.json` and `eslint.config.mjs` so the Next.js build doesn't check it. `supabase/config.toml` turns off JWT checks for it; it checks an `x-cron-secret` header instead.
 - Ask before adding npm packages beyond Clerk, Supabase, Leaflet (the map), and Playwright.
 - Keys (never committed, never read by the agent):
   - `.env.local` for the page: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Only publishable keys reach the browser.
-  - `worker/.env` locally, Railway's variables in production: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`. The secret key skips row-level security; it never goes in the page or in code.
-- Check with `npm run build`, `npm run lint`, and `cd worker && npm test` before committing.
-- Running locally takes two terminals: `npm run dev` in the project folder (the page, localhost:3000) and `npm run dev` in `worker/` (the worker). Only ever run one worker at a time (local or Railway): two would spend the shared daily budget twice as fast.
+  - The worker's keys live only on Supabase: `SUPABASE_URL` and the secret key are provided to Edge Functions automatically; `CRON_SECRET` is an Edge Function secret, and the same value is in Vault (`sky_hunt_cron_secret`) next to the function's URL (`sky_hunt_worker_url`) so Cron can call it. The secret key skips row-level security; it never goes in the page or in code.
+- Check with `npm run build`, `npm run lint`, and `npm run test:worker` before committing.
+- Running locally: `npm run dev` (the page, localhost:3000). There is no local worker: the deployed one (Cron, every 30 s) serves everyone, including localhost, since they share the Supabase project. Never run a second copy; it would spend the shared daily budget twice as fast.
 
 ## Data (Supabase)
 How data moves, the daily budget, and the freshness states are in `docs/data-flow.md`. The schema, policies, and functions are in `supabase/migrations/`. `user_id` is the Clerk user ID (`auth.jwt()->>'sub'`).
@@ -34,13 +34,14 @@ How data moves, the daily budget, and the freshness states are in `docs/data-flo
 
 Location privacy: the exact position stays in the browser's memory. Only coordinates rounded to 2 decimals are saved or sent anywhere; the saved copy updates after moving about 2 km, at most once a minute.
 
-## The worker (`worker/`)
-- `src/index.js`: the loop. Loads the last 24 h of requests and the saved planes, then runs forever (`npm start`), or once (`npm run once`).
+## The worker (`supabase/functions/worker/`)
+- `index.ts`: the Edge Function. Checks `x-cron-secret`, then one run per call. Each call starts from nothing: `loadState()` (in `src/run.js`) reads the last 24 h of requests from `runs`, the saved planes, and any recent 429; if that fails the run makes no requests and is recorded as failed.
+- Scheduling: `supabase/migrations/20261029000000_worker_cron.sql` (pg_cron + pg_net): `sky-hunt-worker` every 30 s, plus hourly pruning of `runs` older than 7 days and of Cron's own history. `src/db.ts` is the only file that talks to Supabase (`npm:` import, Deno only).
 - `src/run.js`: one run: active hunters (last minute) → grid cells (`src/cells.js`, 0.25°; the page's `src/lib/cells.ts` must match) → mode from the budget → one request per cell (max 4, 300 ms apart) → `src/changes.js` decides what to write → upsert/delete → insert a `runs` row → log one line.
-- `src/budget.js`: 500 requests per rolling 24 h, app-wide. Under 75%: every 30 s. 75–90%: every 60 s. 90%+: paused (with an estimated `resume_at`). A 429 pauses for 5 minutes.
+- `src/budget.js`: 500 requests per rolling 24 h, app-wide. Under 75%: requests every run (30 s). 75–90%: every 60 s (Cron still calls every 30 s; a run skips its requests if the last were under 55 s ago, and keeps its planes). 90%+: paused (with an estimated `resume_at`). A 429 pauses for 5 minutes (found again from `runs`' errors). A fetch times out after 6 s, so a run stays under 30 s.
 - `src/classify.js`: commercial = airline-style callsign + an airline in `data/airlines.json` + an airliner type in `src/aircraft.js` (which also sets rarity). Tail-number callsigns and airline codes on non-airliners (NetJets) are private; no callsign/type, military, or unrecognized is unknown. Also marks planes in airport zones (`data/airports.json`).
-- `data/airports.json` and `data/airlines.json` are generated by `scripts/build-airports.mjs` and `scripts/build-airlines.mjs` (sources and commands at the top of each).
-- `test/`: `node --test` on a saved adsb.lol response (`test/fixtures/chicago.json`) and an in-memory stand-in for Supabase: what gets saved, only changes are rewritten, leavers are deleted, runs are recorded, budget modes, failures.
+- `data/airports.json` and `data/airlines.json` (imported as JSON, so they're bundled with the function) are generated by `scripts/build-airports.mjs` and `scripts/build-airlines.mjs` (sources and commands at the top of each).
+- `test/` (`npm run test:worker`): `node --test` on a saved adsb.lol response (`test/fixtures/chicago.json`) and an in-memory stand-in for Supabase: what gets saved, only changes are rewritten, leavers are deleted, runs are recorded, budget modes, failures, and runs that rebuild their state from the database each time (as each Cron call does).
 
 ## Where things are (page)
 - `src/lib/store.ts`: the only data layer for a person's own data (hunter row and catches). `useStore()` is null until it loads. Saves resolve false (and set `save-failed`) unless a row really changed. `catchPlane()` rounds your position before calling `catch_plane()` (which saves it), then updates the page's saved location to match, so the page and worker agree on your grid square. Failed loads and saves keep a technical `problem`, logged to the console and shown in `StorageBanner` only in development.

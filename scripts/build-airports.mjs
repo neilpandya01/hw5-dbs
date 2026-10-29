@@ -72,6 +72,6 @@ for (const line of lines.slice(1)) {
 // The page draws the zones; the worker marks planes inside them so they can't be caught.
 const json = JSON.stringify(rows);
 writeFileSync(new URL("../public/airports.json", import.meta.url), json);
-mkdirSync(new URL("../worker/data/", import.meta.url), { recursive: true });
-writeFileSync(new URL("../worker/data/airports.json", import.meta.url), json);
-console.log(`Wrote ${rows.length} airports to public/airports.json and worker/data/airports.json`);
+mkdirSync(new URL("../supabase/functions/worker/data/", import.meta.url), { recursive: true });
+writeFileSync(new URL("../supabase/functions/worker/data/airports.json", import.meta.url), json);
+console.log(`Wrote ${rows.length} airports to public/airports.json and supabase/functions/worker/data/airports.json`);

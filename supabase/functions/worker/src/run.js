@@ -1,10 +1,11 @@
-import { INTERVAL_S } from "./budget.js";
+import { Budget, DAILY_BUDGET, DAY_MS, INTERVAL_S } from "./budget.js";
 import { cellCenter, cellOf } from "./cells.js";
 import { keyOf, planChanges } from "./changes.js";
 import { toSighting } from "./classify.js";
 import { RateLimited } from "./source.js";
 
-// One run of the worker:
+// One run of the worker. Supabase Cron calls the Edge Function every 30 seconds, and each call is
+// one run that starts from nothing: `loadState` reads what earlier runs left in the database.
 //   1. Who's active? Hunters whose page checked in during the last minute, grouped into grid cells.
 //   2. Pick the mode from the shared daily budget: normal, slow, paused, or idle (nobody active).
 //   3. One adsb.lol request per active cell (at most 4 per run, busiest cells first).
@@ -17,6 +18,11 @@ export const MAX_CELLS_PER_RUN = 4;
 export const REQUEST_GAP_MS = 300;
 /** After adsb.lol refuses a request (HTTP 429), make no requests for this long. */
 export const COOLDOWN_MS = 5 * 60_000;
+/**
+ * Slow mode makes requests every 60 s, but Cron calls every 30 s: skip a run's requests if the last
+ * requests were under this long ago (a little under 60 s, since Cron's timing wobbles).
+ */
+export const SLOW_GAP_MS = INTERVAL_S.slow * 1000 - 5_000;
 
 const iso = (ms) => new Date(ms).toISOString();
 
@@ -31,9 +37,33 @@ export function activeCells(hunters) {
 }
 
 /**
- * @param state { saved: Map<key, row>, budget: Budget, cooldownUntil: ms }, kept between runs
+ * Everything a run needs to know from earlier runs, read from the database:
+ * the planes already saved, the requests made in the last 24 hours, and any 429 cooldown.
+ * If reading fails, the run still happens but only records the failure (so the page shows "down").
+ */
+export async function loadState(db, now) {
+  try {
+    const [history, sightings, rateLimitedAt] = await Promise.all([
+      db.requestHistory(iso(now - DAY_MS)),
+      db.loadSightings(),
+      db.lastRateLimitedAt(iso(now - COOLDOWN_MS)),
+    ]);
+    const lastRequestAt = history.reduce((latest, e) => Math.max(latest, e.at), 0);
+    return {
+      saved: new Map(sightings.map((row) => [keyOf(row), row])),
+      budget: new Budget(DAILY_BUDGET, history),
+      cooldownUntil: rateLimitedAt === null ? 0 : rateLimitedAt + COOLDOWN_MS,
+      lastRequestAt,
+    };
+  } catch (e) {
+    return { saved: new Map(), budget: new Budget(DAILY_BUDGET, []), cooldownUntil: 0, lastRequestAt: 0, loadError: e.message };
+  }
+}
+
+/**
+ * @param state { saved: Map<key, row>, budget: Budget, cooldownUntil: ms, lastRequestAt: ms, loadError? }
  * @param deps  { db, fetchCell, now?, sleep?, log? }
- * @returns { run, waitS }: the row written to `runs`, and how long to wait before the next run
+ * @returns { run }: the row written to `runs`
  */
 export async function runOnce(state, deps) {
   const { db, fetchCell, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log } = deps;
@@ -56,6 +86,8 @@ export async function runOnce(state, deps) {
   };
 
   try {
+    // Without the saved planes and the request count, saving could rewrite everything or overspend.
+    if (state.loadError) throw new Error(state.loadError);
     const hunters = await db.activeHunters(iso(started - ACTIVE_WINDOW_MS));
     const cells = activeCells(hunters).slice(0, MAX_CELLS_PER_RUN);
     const active = new Set(cells);
@@ -72,10 +104,12 @@ export async function runOnce(state, deps) {
 
     const fresh = [];
     const fetched = new Set();
-    if (run.mode === "normal" || run.mode === "slow") {
+    const slowWait = run.mode === "slow" && started - (state.lastRequestAt ?? 0) < SLOW_GAP_MS;
+    if (run.mode === "normal" || (run.mode === "slow" && !slowWait)) {
       for (const [i, cell] of cells.entries()) {
         if (i > 0) await sleep(REQUEST_GAP_MS);
         state.budget.record(now(), 1);
+        state.lastRequestAt = now();
         run.requests += 1;
         try {
           const { aircraft, now: sourceNow } = await fetchCell(cellCenter(cell));
@@ -94,7 +128,7 @@ export async function runOnce(state, deps) {
       }
     }
 
-    // Paused or failed cells keep their planes for now (the page hides positions older than 2 minutes).
+    // Paused, skipped, or failed cells keep their planes for now (the page hides positions older than 2 minutes).
     // Cells nobody is in anymore are cleared.
     const { upserts, deletes } = planChanges(state.saved, fresh, fetched, active);
     if (upserts.length) await db.upsertSightings(upserts);
@@ -123,5 +157,5 @@ export async function runOnce(state, deps) {
       `(${run.requests_24h}/${run.daily_budget} in 24h) upserted=${run.upserted} deleted=${run.deleted}` +
       `${run.resume_at ? ` resume=${run.resume_at}` : ""}${run.error ? ` error="${run.error}"` : ""}`,
   );
-  return { run, waitS: INTERVAL_S[run.mode] };
+  return { run };
 }

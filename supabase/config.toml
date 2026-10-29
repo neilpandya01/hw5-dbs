@@ -1,0 +1,8 @@
+# Supabase CLI settings for this project. Only what differs from the defaults.
+
+project_id = "hw5-dbs"
+
+# The worker is called by Supabase Cron, not a signed-in person. It checks its own `x-cron-secret`
+# header instead of a JWT (the new `sb_secret_` keys aren't JWTs).
+[functions.worker]
+verify_jwt = false

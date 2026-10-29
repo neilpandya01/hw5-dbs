@@ -1,4 +1,4 @@
-// Builds worker/data/airlines.json: ICAO airline code → [name, IATA code]. The worker uses it to tell
+// Builds supabase/functions/worker/data/airlines.json: ICAO airline code → [name, IATA code]. The worker uses it to tell
 // commercial flights (callsign "UAL868" → United Airlines) from everything else, and the IATA code
 // picks the airline's logo.
 //
@@ -73,7 +73,7 @@ for (const line of readFileSync(input, "utf8").split(/\r?\n/)) {
 }
 Object.assign(airlines, OVERRIDES);
 
-const out = new URL("../worker/data/", import.meta.url);
+const out = new URL("../supabase/functions/worker/data/", import.meta.url);
 mkdirSync(out, { recursive: true });
 writeFileSync(new URL("airlines.json", out), JSON.stringify(airlines));
-console.log(`Wrote ${Object.keys(airlines).length} airlines to worker/data/airlines.json`);
+console.log(`Wrote ${Object.keys(airlines).length} airlines to supabase/functions/worker/data/airlines.json`);

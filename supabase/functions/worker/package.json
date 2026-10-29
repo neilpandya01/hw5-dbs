@@ -1,0 +1,6 @@
+{
+  "name": "sky-hunt-worker",
+  "private": true,
+  "description": "Only for the worker's tests: Node runs them (`npm run test:worker` from the project folder). The function itself runs on Deno.",
+  "type": "module"
+}

@@ -7,8 +7,8 @@ const eslintConfig = defineConfig([
   ...nextTs,
   // Override default ignores of eslint-config-next.
   globalIgnores([
-    // The worker is its own Node.js program with its own checks.
-    "worker/**",
+    // The worker is a Supabase Edge Function (Deno) with its own tests.
+    "supabase/**",
     // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",

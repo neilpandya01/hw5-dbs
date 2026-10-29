@@ -1,5 +1,5 @@
 // Rarity tiers for catches. Each tier is always shown with its name, never by color alone.
-// Which aircraft land in which tier is decided by the worker (worker/src/aircraft.js) and saved with each sighting.
+// Which aircraft land in which tier is decided by the worker (supabase/functions/worker/src/aircraft.js) and saved with each sighting.
 
 export type Rarity = "common" | "uncommon" | "rare" | "legendary";
 
