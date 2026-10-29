@@ -236,7 +236,7 @@ function PlaneList({
 /** What the map's colors and icons mean, in words. */
 function Legend() {
   return (
-    <ul aria-label="Map key" className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted">
+    <ul aria-label="Map key" className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted">
       <li className="inline-flex items-center gap-1.5">
         <span aria-hidden="true" className="size-3 rounded-full border-2 border-white bg-[var(--range)]" />
         You
@@ -251,7 +251,7 @@ function Legend() {
       </li>
       <li className="inline-flex items-center gap-1.5">
         <span aria-hidden="true">✈</span>
-        Plane (faded: can&apos;t catch)
+        Plane
       </li>
     </ul>
   );
