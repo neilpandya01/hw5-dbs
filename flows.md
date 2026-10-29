@@ -47,6 +47,8 @@ flowchart TD
   F -- "Down" --> D["'Flight data can't be displayed right now. Come back later.'"]
   F -- "Daily limit reached (app-wide)" --> X["'Sky Hunt has used today's flight data limit. Come back later.' + about when"]
   M --> O["Open a plane: airline + logo, aircraft type, updated X s ago"]
+  M --> Q["Or press Catch on its row in 'In your circle'"]
+  Q --> C
   O -->|commercial, latest ping in my circle, fresh, not over an airport| C["Catch → 'Caught!' → in my collection"]
   O -->|otherwise| W["Says why: private/unknown, outside my circle, over an airport, ping too old, caught today"]
 ```
@@ -63,7 +65,8 @@ flowchart TD
 - Fresh: "Live · updated 12 s ago" (plus "every minute today" when the shared budget is 75–90% used). It stays fresh until about 3 update intervals pass with no successful run (under 2 minutes normally). Just arrived and nobody was active yet: "Looking for planes near you…".
 - Stale, down, and daily limit: as in the chart, each shown once (down and limit as a banner, with no extra pill). Down also covers the worker not running at all (no run for 5 minutes) and a lost live connection. Down and limit hide the planes; the map and collection still work.
 - Inside an airport zone: a note that only planes outside the grey zone can be caught.
-- Opening a plane (on the map or in the lists) shows its card over the bottom of the map, without scrolling the page; from the lists, the map scrolls back into view. Close it with Close, or by tapping empty map.
+- Opening a plane (on the map or in the lists) shows its card over the bottom of the map, with Catch, without scrolling the page; from the lists, the map scrolls back into view. Close it with Close, or by tapping empty map.
+- Below the map, **In your circle** lists each plane with its own **Catch** button, so several can be caught in a row without opening anything. When one can't be caught, the row says why in a word or two ("Private", "Over ORD", "Caught today", "Waiting for update"). After a catch, the row (and card) show "Caught · +25 pts". **Nearby, outside your circle** is view-only: tap a plane to see it on the map.
 - A catch that fails says why, in words (from the database's check).
 
 ## Collection

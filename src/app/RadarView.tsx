@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AirlineLogo, preloadLogos } from "@/components/AirlineLogo";
+import { Button } from "@/components/Button";
 import { FeedProblem, FeedStatus } from "@/components/FeedStatus";
 import { FlightMap, type MapPlane } from "@/components/FlightMap";
 import { LocationHelp } from "@/components/LocationHelp";
@@ -14,7 +15,8 @@ import { CATCH_RANGE_MI } from "@/lib/geo";
 import { useHeartbeat } from "@/lib/heartbeat";
 import { useLiveLocation } from "@/lib/location";
 import { useNearestPlace } from "@/lib/nearestPlace";
-import { ago, catchBlock, feedState, nearbyPlanes, planeTitle, planeType, VIEW_MI, type NearbyPlane } from "@/lib/nearby";
+import { ago, catchBlock, catchShort, feedState, nearbyPlanes, planeTitle, planeType, VIEW_MI, type NearbyPlane } from "@/lib/nearby";
+import { rarityInfo } from "@/lib/rarity";
 import { catchPlane, useStore, type CatchError } from "@/lib/store";
 
 const CATCH_ERRORS: Record<CatchError, string> = {
@@ -49,8 +51,11 @@ export function RadarView() {
   useHeartbeat(!!store && !!saved && store.storage !== "load-failed");
 
   const [selected, setSelected] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  // Catching, per plane: which one is being caught, and how each attempt went (shown on its row and card).
+  const [busyHex, setBusyHex] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, CatchResult>>({});
+  /** Read out by screen readers after a catch from the list (the row itself also changes). */
+  const [announcement, setAnnouncement] = useState("");
   const cardHeading = useRef<HTMLHeadingElement>(null);
   const mapBox = useRef<HTMLDivElement>(null);
   // Logos for every airline on the map, downloaded ahead of time so opening a plane shows its logo at once.
@@ -90,7 +95,8 @@ export function RadarView() {
 
   function open(hex: string) {
     setSelected(hex);
-    setMessage(null);
+    // A failed attempt's message clears when you look again; a success stays.
+    setResults((r) => (r[hex]?.tone === "error" ? omit(r, hex) : r));
   }
 
   /** From the list below the map: open it, and bring the map (with its card) into view. */
@@ -102,20 +108,25 @@ export function RadarView() {
 
   function close() {
     setSelected(null);
-    setMessage(null);
   }
 
+  /** Catch from the map's card or straight from a row in "In your circle". */
   async function onCatch(p: NearbyPlane) {
-    if (!me) return;
-    setBusy(true);
-    setMessage(null);
+    if (!me || busyHex) return;
+    setBusyHex(p.hex);
+    setResults((r) => omit(r, p.hex));
     const result = await catchPlane(p.cell, p.hex, me);
-    setBusy(false);
-    setMessage(
-      result.ok
-        ? { tone: "ok", text: `Caught! ${planeTitle(p)} ${planeType(p)} is in your collection.` }
-        : { tone: "error", text: CATCH_ERRORS[result.error] },
-    );
+    setBusyHex(null);
+    const points = rarityInfo[p.rarity ?? "common"].points;
+    const outcome: CatchResult = result.ok
+      ? {
+          tone: "ok",
+          text: `Caught! ${planeTitle(p)} ${planeType(p)} is in your collection. +${points} points.`,
+          short: `Caught · +${points} pts`,
+        }
+      : { tone: "error", text: CATCH_ERRORS[result.error], short: "Didn't catch" };
+    setResults((r) => ({ ...r, [p.hex]: outcome }));
+    setAnnouncement(outcome.text);
   }
 
   const card = !selected ? null : current ? (
@@ -125,15 +136,17 @@ export function RadarView() {
       aircraft={planeType(current)}
       updated={`Updated ${ago(current.seenAt, now)}`}
       block={catchBlock(current, now, caughtToday)}
-      busy={busy}
-      message={message}
+      busy={busyHex === current.hex}
+      message={results[current.hex] ?? null}
       headingRef={cardHeading}
       onCatch={() => onCatch(current)}
       onClose={close}
     />
   ) : (
     <div role="status" className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4 text-sm">
-      <span className="text-ink">{message?.tone === "ok" ? message.text : "That plane has flown out of view."}</span>
+      <span className="text-ink">
+        {results[selected]?.tone === "ok" ? results[selected].text : "That plane has flown out of view."}
+      </span>
       <button type="button" className="font-medium text-accent underline" onClick={close}>
         Close
       </button>
@@ -186,6 +199,9 @@ export function RadarView() {
       </div>
 
 
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
       {showPlanes && (
         <>
           <Section title={`In your ${CATCH_RANGE_MI}-mile circle (${inRange.length})`}>
@@ -194,7 +210,14 @@ export function RadarView() {
                 <p>Watch the map: planes heading your way will show up here.</p>
               </EmptyState>
             ) : (
-              <PlaneList planes={inRange} now={now} caughtToday={caughtToday} selected={current?.hex ?? null} onOpen={openFromList} />
+              <PlaneList
+                planes={inRange}
+                now={now}
+                caughtToday={caughtToday}
+                selected={current?.hex ?? null}
+                onOpen={openFromList}
+                catching={{ busyHex, results, onCatch }}
+              />
             )}
           </Section>
           {outside.length > 0 && (
@@ -213,50 +236,97 @@ function rowLabel(p: NearbyPlane): string {
   return `${planeTitle(p)}, ${planeType(p)}, ${p.distanceMi.toFixed(1)} miles away${heading}`;
 }
 
+type CatchResult = { tone: "ok" | "error"; text: string; short: string };
+
+function omit<T>(r: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in r)) return r;
+  const { [key]: _, ...rest } = r;
+  void _;
+  return rest;
+}
+
+/**
+ * Planes as rows: press a row to see the plane on the map. With `catching` (the "In your circle" list),
+ * each row also has its own Catch button, or a word or two on why it can't be caught.
+ */
 function PlaneList({
   planes,
   now,
   caughtToday,
   selected,
   onOpen,
+  catching,
 }: {
   planes: NearbyPlane[];
   now: number;
   caughtToday: Set<string>;
   selected: string | null;
   onOpen: (hex: string) => void;
+  catching?: { busyHex: string | null; results: Record<string, CatchResult>; onCatch: (p: NearbyPlane) => void };
 }) {
   return (
     <ul className="flex flex-col gap-2">
-      {planes.map((p) => {
-        const catchable = !catchBlock(p, now, caughtToday);
-        return (
-          <li key={p.hex}>
-            <button
-              type="button"
-              onClick={() => onOpen(p.hex)}
-              aria-pressed={p.hex === selected}
-              className={`flex w-full items-center gap-3 rounded-xl border bg-surface px-3 py-2.5 text-left hover:border-control ${
-                p.hex === selected ? "border-accent" : "border-line"
-              }`}
-            >
-              <AirlineLogo iata={p.kind === "commercial" ? p.airlineIata : null} size="sm" />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate font-medium text-ink">{planeTitle(p)}</span>
-                <span className="truncate text-sm text-muted">
-                  {planeType(p)} · {p.distanceMi.toFixed(1)} mi{p.direction ? ` · heading ${p.direction}` : ""}
-                </span>
+      {planes.map((p) => (
+        <li
+          key={p.hex}
+          className={`flex items-center gap-2 rounded-xl border bg-surface pr-3 ${p.hex === selected ? "border-accent" : "border-line"}`}
+        >
+          <button
+            type="button"
+            onClick={() => onOpen(p.hex)}
+            aria-pressed={p.hex === selected}
+            aria-label={`Show ${planeTitle(p)} ${planeType(p)} on the map`}
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-bg"
+          >
+            <AirlineLogo iata={p.kind === "commercial" ? p.airlineIata : null} size="sm" />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate font-medium text-ink">{planeTitle(p)}</span>
+              <span className="truncate text-sm text-muted">
+                {planeType(p)} · {p.distanceMi.toFixed(1)} mi{p.direction ? ` · heading ${p.direction}` : ""}
               </span>
-              {catchable ? (
-                <span className="shrink-0 rounded-full bg-ok-soft px-2 py-0.5 text-xs font-semibold text-ok">Catchable</span>
-              ) : caughtToday.has(p.hex) ? (
-                <span className="shrink-0 text-xs font-medium text-muted">Caught today</span>
-              ) : null}
-            </button>
-          </li>
-        );
-      })}
+            </span>
+          </button>
+          {catching && <RowCatch plane={p} now={now} caughtToday={caughtToday} {...catching} />}
+        </li>
+      ))}
     </ul>
+  );
+}
+
+/** A row's catch control: Catch, Catching…, "Caught · +25 pts", or why it can't be caught. */
+function RowCatch({
+  plane,
+  now,
+  caughtToday,
+  busyHex,
+  results,
+  onCatch,
+}: {
+  plane: NearbyPlane;
+  now: number;
+  caughtToday: Set<string>;
+  busyHex: string | null;
+  results: Record<string, CatchResult>;
+  onCatch: (p: NearbyPlane) => void;
+}) {
+  const result = results[plane.hex];
+  if (result?.tone === "ok") return <span className="shrink-0 text-xs font-semibold text-ok">{result.short}</span>;
+  if (busyHex === plane.hex) {
+    return (
+      <Button size="sm" disabled>
+        <Spinner /> Catching…
+      </Button>
+    );
+  }
+  const why = catchShort(plane, now, caughtToday);
+  if (why) return <span className="shrink-0 text-right text-xs font-medium text-muted">{why}</span>;
+  return (
+    <span className="flex shrink-0 flex-col items-end gap-0.5">
+      <Button size="sm" onClick={() => onCatch(plane)} disabled={!!busyHex} aria-label={`Catch ${planeTitle(plane)} ${planeType(plane)}`}>
+        {result?.tone === "error" ? "Try again" : "Catch"}
+      </Button>
+      {result?.tone === "error" && <span className="text-xs text-danger">{result.short}</span>}
+    </span>
   );
 }
 

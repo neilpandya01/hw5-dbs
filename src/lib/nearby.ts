@@ -45,6 +45,16 @@ export function catchBlock(p: NearbyPlane, now: number, caughtToday: Set<string>
   return null;
 }
 
+/** The same reasons as catchBlock(), in a word or two, for a list row. Null if it can be caught. */
+export function catchShort(p: NearbyPlane, now: number, caughtToday: Set<string>): string | null {
+  if (p.kind !== "commercial") return p.kind === "private" ? "Private" : "Unknown";
+  if (caughtToday.has(p.hex)) return "Caught today";
+  if (now - p.seenAt > CATCH_FRESH_MS) return "Waiting for update";
+  if (p.airport) return `Over ${p.airport}`;
+  if (!p.inRange) return "Outside circle";
+  return null;
+}
+
 /** "Commercial" planes show their airline; others are "Private plane" or "Unknown aircraft". */
 export function planeTitle(p: Pick<Sighting, "kind" | "airlineName">): string {
   if (p.kind === "commercial" && p.airlineName) return p.airlineName;
