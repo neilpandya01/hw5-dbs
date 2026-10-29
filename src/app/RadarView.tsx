@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AirlineLogo } from "@/components/AirlineLogo";
+import { AirlineLogo, preloadLogos } from "@/components/AirlineLogo";
 import { FeedProblem, FeedStatus } from "@/components/FeedStatus";
 import { FlightMap, type MapPlane } from "@/components/FlightMap";
 import { LocationHelp } from "@/components/LocationHelp";
@@ -53,6 +53,16 @@ export function RadarView() {
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const cardHeading = useRef<HTMLHeadingElement>(null);
   const mapBox = useRef<HTMLDivElement>(null);
+  // Logos for every airline on the map, downloaded ahead of time so opening a plane shows its logo at once.
+  const logoCodes = flights.planes
+    .filter((p) => p.kind === "commercial" && p.airlineIata)
+    .map((p) => p.airlineIata)
+    .sort()
+    .join(",");
+  useEffect(() => {
+    if (logoCodes) preloadLogos(logoCodes.split(","));
+  }, [logoCodes]);
+
   // Opening a plane moves keyboard focus to its card (over the map) without jumping the page.
   useEffect(() => {
     if (selected) cardHeading.current?.focus({ preventScroll: true });
