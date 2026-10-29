@@ -1,4 +1,4 @@
-import type { Run, Sighting } from "./flights";
+import type { Connection, Run, Sighting } from "./flights";
 import { CATCH_RANGE_MI, compass, distanceMi, type LatLon } from "./geo";
 
 // What to show near you, whether each plane can be caught, and how fresh the flight data is.
@@ -74,28 +74,46 @@ export function ago(ms: number, now: number): string {
 }
 
 /**
- * How fresh the flight data is, from the worker's latest run (app-wide):
- *   loading  not loaded yet
- *   fresh    the last run worked recently (slow: the shared daily budget is 75-90% used)
- *   stale    no run for a few intervals
- *   down     the last run failed, the worker hasn't run in 5 minutes, or the database is unreachable
- *   limit    the shared daily budget is 90%+ used: updates paused until resumeAt
+ * How fresh the flight data is, from the worker's latest run (app-wide) and this page's live connection.
+ * Checked in this order, so exactly one applies:
+ *   loading     nothing loaded yet
+ *   down        the database can't be reached; the live connection has been lost for over 45 s;
+ *               the worker hasn't run in 5 minutes; or its latest run failed
+ *   limit       the shared daily budget is 90%+ used: updates paused until resumeAt
+ *   connecting  the live connection is (re)starting (under 45 s): what's shown may be a little behind
+ *   starting    the worker's latest run had nobody active (you just arrived): your first update is coming
+ *   stale       no run for 3 intervals plus 15 s (105 s normally, 195 s in slow mode)
+ *   fresh       otherwise ("slow" when the budget is 75-90% used and runs come every 60 s)
  */
 export type Feed =
   | { status: "loading" }
-  | { status: "fresh"; updatedAt: number; slow: boolean; idle: boolean }
-  | { status: "stale"; updatedAt: number }
   | { status: "down" }
-  | { status: "limit"; resumeAt: number | null };
+  | { status: "limit"; resumeAt: number | null }
+  | { status: "connecting" }
+  | { status: "starting" }
+  | { status: "stale"; updatedAt: number }
+  | { status: "fresh"; updatedAt: number; slow: boolean };
 
-export function feedState(loaded: boolean, error: boolean, run: Run | null, now: number): Feed {
+/** How long the live connection may be lost before the page says flight data is unavailable. */
+export const OFFLINE_DOWN_MS = 45_000;
+/** No worker run for this long means the worker isn't running. */
+export const WORKER_DOWN_MS = 5 * 60_000;
+
+export function feedState(
+  flights: { loaded: boolean; error: boolean; connection: Connection; offlineSince: number | null; run: Run | null },
+  now: number,
+): Feed {
+  const { loaded, error, connection, offlineSince, run } = flights;
   if (!loaded || now === 0) return { status: "loading" };
-  if (error || !run) return { status: "down" };
-  const age = now - run.finishedAt;
-  if (age > 5 * 60_000) return { status: "down" };
+  if (error) return { status: "down" };
+  const offlineFor = connection === "live" || offlineSince === null ? 0 : now - offlineSince;
+  if (offlineFor > OFFLINE_DOWN_MS) return { status: "down" };
+  if (!run || now - run.finishedAt > WORKER_DOWN_MS) return { status: "down" };
   if (run.mode === "paused") return { status: "limit", resumeAt: run.resumeAt };
   if (!run.ok) return { status: "down" };
+  if (connection !== "live") return { status: "connecting" };
+  if (run.mode === "idle") return { status: "starting" };
   const interval = run.mode === "slow" ? 60_000 : 30_000;
-  if (age > 3 * interval + 15_000) return { status: "stale", updatedAt: run.finishedAt };
-  return { status: "fresh", updatedAt: run.finishedAt, slow: run.mode === "slow", idle: run.mode === "idle" };
+  if (now - run.finishedAt > 3 * interval + 15_000) return { status: "stale", updatedAt: run.finishedAt };
+  return { status: "fresh", updatedAt: run.finishedAt, slow: run.mode === "slow" };
 }

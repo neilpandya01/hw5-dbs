@@ -47,11 +47,17 @@ A refused request (HTTP 429) also pauses requests for 5 minutes. The worker coun
 
 From the latest row in `runs`:
 
+From the latest row in `runs` and the page's own live (Realtime) connection, checked in this order:
+
 - **Loading:** before the first answer.
-- **Fresh:** the last run worked within about 3 intervals. (Idle means nobody was active yet: "Looking for planes near you…")
-- **Stale:** no successful run for 3 intervals: "Flight data is 2 min old"; old positions aren't catchable.
-- **Down:** the last run failed, no run for 5 minutes (the worker isn't running), Supabase is unreachable, or the Realtime connection failed: "Flight data can't be displayed right now. Come back later."
+- **Down:** Supabase is unreachable, the live connection has been lost for over 45 seconds, no run for 5 minutes (the worker isn't running), or the latest run failed: "Flight data can't be displayed right now. Come back later."
 - **Limit:** the budget pause above.
+- **Connecting:** the live connection is starting or reconnecting (under 45 seconds): "Connecting to live updates…"
+- **Starting:** the latest run had nobody active (you just arrived): "Live · first update in under 30 s".
+- **Stale:** no run for 3 intervals plus 15 seconds (105 s normally): "No update for 2 min: positions may be out of date"; old positions aren't catchable.
+- **Fresh:** "Live · updated 12 s ago".
+
+The page reconnects on its own when the live connection drops (after 3 seconds), and if it hears nothing for 75 seconds it reloads what's saved and reconnects.
 
 ## Tables
 

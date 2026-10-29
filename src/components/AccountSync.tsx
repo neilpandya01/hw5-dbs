@@ -5,6 +5,29 @@ import { useEffect, useRef } from "react";
 import { loadStore } from "@/lib/store";
 import { setTokenSource } from "@/lib/supabase";
 
+type GetToken = (options?: { skipCache?: boolean }) => Promise<string | null>;
+
+/** Seconds until a token expires (from its `exp` claim), or 0 if it can't be read. */
+function secondsLeft(token: string): number {
+  try {
+    const { exp } = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: number };
+    return exp ? exp - Date.now() / 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Clerk's session tokens last about a minute. Realtime asks for a token every 25 seconds and closes the
+ * connection, without reconnecting, if that token expires before the next ask. So hand over a token
+ * with at least 45 seconds left, asking Clerk for a new one when the cached one is older.
+ */
+async function freshToken(getToken: GetToken): Promise<string | null> {
+  const token = await getToken();
+  if (!token || secondsLeft(token) >= 45) return token;
+  return getToken({ skipCache: true });
+}
+
 /**
  * Connects the signed-in Clerk user to their data. Renders nothing.
  *   - Hands Clerk's session token to Supabase, so row-level security (and Realtime) know who is asking.
@@ -20,7 +43,7 @@ export function AccountSync() {
 
   useEffect(() => {
     if (!isLoaded) return;
-    setTokenSource(userId ? () => tokenFn.current() : null);
+    setTokenSource(userId ? () => freshToken(tokenFn.current) : null);
     void loadStore(userId ?? null);
     return () => {
       // Signed out (or switched people): nobody else should see their catches or location.

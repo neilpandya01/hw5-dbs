@@ -86,8 +86,9 @@ export function RadarView() {
 
   const where = place ? `Near ${place}` : me ? "Your location" : "Finding you…";
   const atAirport = me ? noCatchZoneAt(airports, me) : null;
-  const feed = feedState(flights.loaded, flights.error, flights.run, now);
-  const showPlanes = feed.status === "fresh" || feed.status === "stale";
+  const feed = feedState(flights, now);
+  // Planes show whenever there is data to show; positions older than 2 minutes are hidden either way.
+  const showPlanes = feed.status === "fresh" || feed.status === "stale" || feed.status === "connecting" || feed.status === "starting";
   const { inRange, outside } = me && showPlanes ? nearbyPlanes(flights.planes, me, now) : { inRange: [], outside: [] };
   const today = new Date(now).toISOString().slice(0, 10);
   const caughtToday = new Set(store.data.catches.filter((c) => c.caughtAt.slice(0, 10) === today).map((c) => c.hex));
@@ -190,7 +191,7 @@ export function RadarView() {
           {showPlanes && shown.length === 0 && (
             <>
               <p className="font-medium text-ink">
-                {feed.status === "fresh" && feed.idle ? "Looking for planes near you…" : "No planes nearby right now"}
+                {feed.status === "starting" || feed.status === "connecting" ? "Looking for planes near you…" : "No planes nearby right now"}
               </p>
               <p className="text-muted">Planes within {VIEW_MI} miles show up here. It updates about every 30 seconds.</p>
             </>

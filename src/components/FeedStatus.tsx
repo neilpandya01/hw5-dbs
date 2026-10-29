@@ -14,6 +14,20 @@ export function FeedStatus({ feed, now }: { feed: Feed; now: number }) {
           Loading flights…
         </p>
       );
+    case "connecting":
+      return (
+        <p className={`${pill} border-line bg-surface text-muted`}>
+          <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-warn motion-reduce:animate-none" />
+          Connecting to live updates…
+        </p>
+      );
+    case "starting":
+      return (
+        <p className={`${pill} border-line bg-surface text-muted`}>
+          <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-ok motion-reduce:animate-none" />
+          Live · first update in under 30 s
+        </p>
+      );
     case "fresh":
       return (
         <p className={`${pill} border-line bg-surface text-ink`}>
@@ -26,7 +40,7 @@ export function FeedStatus({ feed, now }: { feed: Feed; now: number }) {
       return (
         <p className={`${pill} border-warn bg-warn-soft text-warn`}>
           <span aria-hidden="true" className="size-2 rounded-full bg-warn" />
-          Flight data is {ago(feed.updatedAt, now).replace(" ago", "")} old
+          No update for {ago(feed.updatedAt, now).replace(" ago", "")}: positions may be out of date
         </p>
       );
     case "down":

@@ -25,10 +25,9 @@ const LABEL_ZOOM = 10;
 const PLANE_SVG =
   '<svg viewBox="-8 -8 16 16" width="26" height="26" aria-hidden="true"><path d="M0,-6 L1,-2 L6,1 L6,2.5 L1,1.2 L0.8,4 L2.5,5.4 L2.5,6.3 L0,5.6 L-2.5,6.3 L-2.5,5.4 L-0.8,4 L-1,1.2 L-6,2.5 L-6,1 L-1,-2 Z"/></svg>';
 
-/** `selected` matches the app's accent color (--accent), so the chosen plane reads as "picked". */
-type Palette = { range: string; you: string; zone: string; heading: string; selected: string; tiles: "World_Light_Gray" | "World_Dark_Gray" };
-const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", heading: "#141a21", selected: "#1c5d8c", tiles: "World_Light_Gray" };
-const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", heading: "#e8edf2", selected: "#8cc8f0", tiles: "World_Dark_Gray" };
+type Palette = { range: string; you: string; zone: string; heading: string; tiles: "World_Light_Gray" | "World_Dark_Gray" };
+const LIGHT: Palette = { range: "#2563eb", you: "#2563eb", zone: "#6b7280", heading: "#141a21", tiles: "World_Light_Gray" };
+const DARK: Palette = { range: "#60a5fa", you: "#60a5fa", zone: "#9ca3af", heading: "#e8edf2", tiles: "World_Dark_Gray" };
 
 /**
  * Street map tiles: Esri's grey "Canvas" basemaps, which need no API key (CARTO's now do).
@@ -276,10 +275,8 @@ export function FlightMap({
         const rad = (p.heading * Math.PI) / 180;
         const ahead = moveBy(p.position, Math.sin(rad) * HEADING_LINE_MI, Math.cos(rad) * HEADING_LINE_MI);
         const path: [number, number][] = [at, [ahead.lat, ahead.lon]];
-        // The selected plane's line is in the accent color and bolder, so its path stands out.
-        const style = selected
-          ? { color: palette.selected, opacity: 0.95, weight: 2.5 }
-          : { color: palette.heading, opacity: p.catchable ? 0.7 : 0.35, weight: 1.5 };
+        // The same grey dashed line for every plane, selected or not.
+        const style = { color: palette.heading, opacity: selected || p.catchable ? 0.7 : 0.35, weight: 1.5 };
         if (entry.line) entry.line.setLatLngs(path).setStyle(style);
         else {
           entry.line = leaflet.polyline(path, { ...style, dashArray: "3 5", interactive: false }).addTo(layer);
@@ -293,7 +290,35 @@ export function FlightMap({
       entry.line?.remove();
       markers.current.delete(id);
     }
-  }, [planes, selectedId, ready, palette.heading, palette.selected]);
+  }, [planes, selectedId, ready, palette.heading]);
+
+  // A newly selected plane that's off-screen (picked from the list) is brought into view: the map
+  // fits both you and it, never zooming in further, and stops following you ("Back to me" returns).
+  const framed = useRef<string | null>(null);
+  useEffect(() => {
+    const leaflet = L.current;
+    const m = map.current;
+    if (!selectedId) {
+      framed.current = null;
+      return;
+    }
+    if (!leaflet || !m || framed.current === selectedId) return;
+    const plane = planes.find((p) => p.id === selectedId);
+    if (!plane) return;
+    framed.current = selectedId;
+    const at = leaflet.latLng(plane.position.lat, plane.position.lon);
+    if (m.getBounds().pad(-0.1).contains(at)) return; // already comfortably in view
+    queueMicrotask(() => setFollowing(false));
+    if (center) {
+      m.fitBounds(leaflet.latLngBounds([at, [center.lat, center.lon]]), {
+        padding: [48, 48],
+        maxZoom: m.getZoom(),
+        animate: !matchMedia("(prefers-reduced-motion: reduce)").matches,
+      });
+    } else {
+      m.panTo(at);
+    }
+  }, [selectedId, planes, center, ready]);
 
   function backToMe() {
     setFollowing(true);
@@ -324,15 +349,14 @@ export function FlightMap({
 }
 
 /**
- * A plane's icon, rotated to its direction of travel. Selected: bigger, in the accent color, on a
- * highlighted disc with a soft pulsing ring (see .plane-marker in globals.css).
+ * A plane's icon, rotated to its direction of travel. Selected: the same size, drawn bold in the
+ * accent color (see .plane-marker.is-selected in globals.css).
  */
 function planeIcon(leaflet: typeof import("leaflet"), p: MapPlane, selected: boolean) {
-  const size = selected ? 48 : 34;
   return leaflet.divIcon({
     className: `plane-marker${selected ? " is-selected" : ""}${p.catchable ? "" : " is-faded"}`,
-    html: `<span class="plane-halo"></span><span class="plane-icon" style="transform: rotate(${p.heading ?? 0}deg)">${PLANE_SVG}</span>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
+    html: `<span class="plane-icon" style="transform: rotate(${p.heading ?? 0}deg)">${PLANE_SVG}</span>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
   });
 }

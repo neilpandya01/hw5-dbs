@@ -1,5 +1,6 @@
 "use client";
 
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import type { Rarity } from "./rarity";
 import { supabase } from "./supabase";
@@ -109,16 +110,27 @@ function toRun(r: RunRow): Run {
   };
 }
 
+/** The live (Realtime) connection: connecting at first, live once subscribed, reconnecting after a drop. */
+export type Connection = "connecting" | "live" | "reconnecting";
+
 export type FlightsState = {
   /** False until the first load answers. */
   loaded: boolean;
-  /** The database or Realtime couldn't be reached. */
+  /** The database couldn't be reached. */
   error: boolean;
+  connection: Connection;
+  /** When the live connection was last lost (or first started connecting), in ms; null while live. */
+  offlineSince: number | null;
   planes: Sighting[];
   run: Run | null;
 };
 
-const INITIAL: FlightsState = { loaded: false, error: false, planes: [], run: null };
+const INITIAL: FlightsState = { loaded: false, error: false, connection: "connecting", offlineSince: null, planes: [], run: null };
+
+/** Reconnect this long after the live connection drops. */
+const RETRY_MS = 3_000;
+/** If nothing has arrived for this long (a run comes every 30-60 s), reload and reconnect. */
+const QUIET_MS = 75_000;
 
 export function useFlights(cell: string | null): FlightsState {
   const [state, setState] = useState<{ cell: string | null; flights: FlightsState }>({ cell, flights: INITIAL });
@@ -127,9 +139,20 @@ export function useFlights(cell: string | null): FlightsState {
     const sb = supabase();
     if (!cell || !sb) return;
     let cancelled = false;
+    let channel: RealtimeChannel | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let lastHeard = Date.now();
+    let offlineSince: number | null = Date.now();
     const planes = new Map<string, Sighting>();
     const publish = (patch: Partial<FlightsState>) =>
-      !cancelled && setState((s) => ({ cell, flights: { ...(s.cell === cell ? s.flights : INITIAL), ...patch, planes: [...planes.values()] } }));
+      !cancelled &&
+      setState((s) => ({
+        cell,
+        flights: { ...(s.cell === cell ? s.flights : INITIAL), offlineSince, ...patch, planes: [...planes.values()] },
+      }));
+    const heard = () => {
+      lastHeard = Date.now();
+    };
 
     async function load() {
       const [s, r] = await Promise.all([
@@ -137,46 +160,91 @@ export function useFlights(cell: string | null): FlightsState {
         sb!.from("runs").select(RUN_COLUMNS).order("started_at", { ascending: false }).limit(1).maybeSingle(),
       ]);
       if (cancelled) return;
+      heard();
       if (s.error || r.error) return publish({ loaded: true, error: true });
       planes.clear();
       for (const row of s.data as SightingRow[]) planes.set(row.hex, toSighting(row));
       publish({ loaded: true, error: false, run: r.data ? toRun(r.data as RunRow) : null });
     }
 
-    const filter = `cell=eq.${cell}`;
-    const channel = sb
-      .channel(`flights:${cell}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "sightings", filter }, (p) => {
-        const row = toSighting(p.new as SightingRow);
-        planes.set(row.hex, row);
-        publish({});
-      })
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "sightings", filter }, (p) => {
-        const row = toSighting(p.new as SightingRow);
-        planes.set(row.hex, row);
-        publish({});
-      })
-      // Deletes can't be filtered by Realtime; each carries the row's key (cell, hex), so check the cell here.
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "sightings" }, (p) => {
-        const old = p.old as Partial<SightingRow>;
-        if (old.cell === cell && old.hex && planes.delete(old.hex)) publish({});
-      })
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "runs" }, (p) => {
-        publish({ run: toRun(p.new as RunRow) });
-      })
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") void load();
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") publish({ loaded: true, error: true });
-      });
+    function connect() {
+      if (cancelled) return;
+      // A fresh topic every time: the Realtime client hands back an existing channel with the same
+      // name, even one still being torn down, and the new subscription would silently die with it.
+      const topic = `flights:${cell}:${Math.random().toString(36).slice(2, 10)}`;
+      const filter = `cell=eq.${cell}`;
+      const ch: RealtimeChannel = sb!
+        .channel(topic)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "sightings", filter }, (p) => {
+          heard();
+          const row = toSighting(p.new as SightingRow);
+          planes.set(row.hex, row);
+          publish({});
+        })
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "sightings", filter }, (p) => {
+          heard();
+          const row = toSighting(p.new as SightingRow);
+          planes.set(row.hex, row);
+          publish({});
+        })
+        // Deletes can't be filtered by Realtime; each carries the row's key (cell, hex), so check the cell here.
+        .on("postgres_changes", { event: "DELETE", schema: "public", table: "sightings" }, (p) => {
+          const old = p.old as Partial<SightingRow>;
+          if (old.cell === cell && old.hex && planes.delete(old.hex)) publish({});
+        })
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "runs" }, (p) => {
+          heard();
+          publish({ run: toRun(p.new as RunRow) });
+        })
+        .subscribe((status, err) => {
+          if (cancelled || ch !== channel) return; // an old channel closing
+          if (status === "SUBSCRIBED") {
+            offlineSince = null;
+            publish({ connection: "live" });
+            void load(); // catch up on anything missed while connecting
+            return;
+          }
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            if (process.env.NODE_ENV !== "production") console.warn(`[realtime] ${status}`, err?.message ?? "");
+            offlineSince ??= Date.now();
+            publish({ connection: "reconnecting" });
+            reconnectSoon();
+          }
+        });
+      channel = ch;
+    }
+
+    function reconnectSoon() {
+      clearTimeout(retry);
+      retry = setTimeout(() => {
+        const old = channel;
+        channel = null;
+        if (old) void sb!.removeChannel(old);
+        connect();
+      }, RETRY_MS);
+    }
+
+    // Safety net: if the page has heard nothing for a while (no new run, no plane), reload what's saved
+    // and reconnect. When everything works, this never fires: a run arrives every 30-60 seconds.
+    const watchdog = setInterval(() => {
+      if (document.hidden || Date.now() - lastHeard < QUIET_MS) return;
+      heard();
+      void load();
+      reconnectSoon();
+    }, 15_000);
 
     const onVisible = () => {
       if (!document.hidden) void load();
     };
     document.addEventListener("visibilitychange", onVisible);
+    connect();
+
     return () => {
       cancelled = true;
+      clearTimeout(retry);
+      clearInterval(watchdog);
       document.removeEventListener("visibilitychange", onVisible);
-      void sb.removeChannel(channel);
+      if (channel) void sb.removeChannel(channel);
     };
   }, [cell]);
 
