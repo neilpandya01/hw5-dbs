@@ -52,10 +52,12 @@ From the latest row in `runs` and the page's own live (Realtime) connection, che
 - **Loading:** before the first answer.
 - **Down:** Supabase is unreachable, the live connection has been lost for over 45 seconds, no run for 5 minutes (the worker isn't running), or the latest run failed: "Flight data can't be displayed right now. Come back later."
 - **Limit:** the budget pause above.
-- **Connecting:** the live connection is starting or reconnecting (under 45 seconds): "Connecting to live updates…"
-- **Starting:** the latest run had nobody active (you just arrived): "Live · first update in under 30 s".
-- **Stale:** no run for 3 intervals plus 15 seconds (105 s normally): "No update for 2 min: positions may be out of date"; old positions aren't catchable.
-- **Fresh:** "Live · updated 12 s ago".
+- **Connecting:** the live connection is starting or reconnecting (under 45 seconds): "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are on the map.
+- **Starting:** the latest run had nobody active (you just arrived): "Live · looking for planes near you (first update in under 30 s)".
+- **Stale:** no run for 3 intervals plus 15 seconds (105 s normally): "No update for 2 min · these positions may be out of date" when planes are still shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off (after 2 minutes). Old positions aren't catchable.
+- **Fresh:** "Live · updated 12 s ago · 8 planes within 15 mi" (or "no planes within 15 mi right now").
+
+The status line is the only message about flight data on the Radar page; down and the daily limit replace it with one banner.
 
 The page reconnects on its own when the live connection drops (after 3 seconds), and if it hears nothing for 75 seconds it reloads what's saved and reconnects.
 

@@ -15,7 +15,7 @@ import { CATCH_RANGE_MI } from "@/lib/geo";
 import { useHeartbeat } from "@/lib/heartbeat";
 import { useLiveLocation } from "@/lib/location";
 import { useNearestPlace } from "@/lib/nearestPlace";
-import { ago, catchBlock, catchShort, feedState, nearbyPlanes, planeTitle, planeType, VIEW_MI, type NearbyPlane } from "@/lib/nearby";
+import { ago, catchBlock, catchShort, feedState, nearbyPlanes, planeTitle, planeType, type NearbyPlane } from "@/lib/nearby";
 import { rarityInfo } from "@/lib/rarity";
 import { catchPlane, useStore, type CatchError } from "@/lib/store";
 
@@ -174,7 +174,7 @@ export function RadarView() {
       )}
 
       <div className="flex flex-col gap-2">
-        <FeedStatus feed={feed} now={now} />
+        <FeedStatus feed={feed} now={now} shown={shown.length} />
         <FeedProblem feed={feed} />
       </div>
 
@@ -187,16 +187,7 @@ export function RadarView() {
           onSelect={open}
           onMapClick={close}
           caption={`Map around you (${where}). ${inRange.length} planes in your circle, ${outside.length} more nearby.`}
-        >
-          {showPlanes && shown.length === 0 && (
-            <>
-              <p className="font-medium text-ink">
-                {feed.status === "starting" || feed.status === "connecting" ? "Looking for planes near you…" : "No planes nearby right now"}
-              </p>
-              <p className="text-muted">Planes within {VIEW_MI} miles show up here. It updates about every 30 seconds.</p>
-            </>
-          )}
-        </FlightMap>
+        />
         {/* The selected plane, right under the map and before everything else. */}
         {card && (
           <div ref={cardBox} className="scroll-mb-6">

@@ -77,7 +77,11 @@ export function FlightMap({
   const zoneLayer = useRef<LayerGroup | null>(null);
   const planeLayer = useRef<LayerGroup | null>(null);
   /** Plane markers by ID, kept between updates (see the planes effect). */
-  const markers = useRef(new Map<string, { marker: Marker; line: Polyline | null; iconKey: string }>());
+  const markers = useRef(
+    new Map<string, { marker: Marker; line: Polyline | null; iconKey: string; lineKey: string; styleKey: string }>(),
+  );
+  /** True during a zoom animation. Paths updated mid-zoom are drawn for the wrong zoom level, so updates wait. */
+  const zooming = useRef(false);
   const [ready, setReady] = useState(0); // bumps when the map exists or the color scheme changes
   const [view, setView] = useState(0); // bumps after each pan or zoom (only the airport zones use it)
   const [following, setFollowing] = useState(true);
@@ -113,7 +117,9 @@ export function FlightMap({
       planeLayer.current = leaflet.layerGroup().addTo(m);
       // Dragging means "let me look around": stop following until "Back to me".
       m.on("dragstart", () => setFollowing(false));
-      // Zones and their labels depend on zoom and on what's in view.
+      // Zones and their labels depend on zoom and on what's in view; planes catch up after a zoom.
+      m.on("zoomstart", () => (zooming.current = true));
+      m.on("zoomend", () => (zooming.current = false));
       m.on("moveend", () => setView((n) => n + 1));
       // Clicks on planes don't reach the map; this is a click on empty map.
       m.on("click", () => onMapClickRef.current?.());
@@ -231,7 +237,7 @@ export function FlightMap({
   useEffect(() => {
     const leaflet = L.current;
     const layer = planeLayer.current;
-    if (!leaflet || !layer) return;
+    if (!leaflet || !layer || zooming.current) return; // after a zoom, `view` changes and this runs again
     const seen = new Set<string>();
     for (const p of planes) {
       seen.add(p.id);
@@ -250,7 +256,7 @@ export function FlightMap({
           })
           .on("click", () => onSelectRef.current?.(p.id))
           .addTo(layer);
-        entry = { marker, line: null, iconKey };
+        entry = { marker, line: null, iconKey, lineKey: "", styleKey: "" };
         markers.current.set(p.id, entry);
       } else {
         const now = entry.marker.getLatLng();
@@ -267,20 +273,28 @@ export function FlightMap({
           el.setAttribute("alt", p.label);
         }
       }
-      // The dashed line ahead of it, in its direction of travel.
+      // The dashed line ahead of it, in its direction of travel. Only touched when the plane moved or
+      // turned (or its look changed), never just because the page re-rendered.
       if (p.heading === null) {
         entry.line?.remove();
         entry.line = null;
+        entry.lineKey = "";
       } else {
+        // The same grey dashed line for every plane, selected or not.
+        const style = { color: palette.heading, opacity: selected || p.catchable ? 0.7 : 0.35, weight: 1.5 };
+        const lineKey = `${at[0]},${at[1]},${p.heading}`;
+        const styleKey = `${style.color},${style.opacity}`;
         const rad = (p.heading * Math.PI) / 180;
         const ahead = moveBy(p.position, Math.sin(rad) * HEADING_LINE_MI, Math.cos(rad) * HEADING_LINE_MI);
         const path: [number, number][] = [at, [ahead.lat, ahead.lon]];
-        // The same grey dashed line for every plane, selected or not.
-        const style = { color: palette.heading, opacity: selected || p.catchable ? 0.7 : 0.35, weight: 1.5 };
-        if (entry.line) entry.line.setLatLngs(path).setStyle(style);
-        else {
+        if (!entry.line) {
           entry.line = leaflet.polyline(path, { ...style, dashArray: "3 5", interactive: false }).addTo(layer);
+        } else {
+          if (entry.lineKey !== lineKey) entry.line.setLatLngs(path);
+          if (entry.styleKey !== styleKey) entry.line.setStyle(style);
         }
+        entry.lineKey = lineKey;
+        entry.styleKey = styleKey;
       }
     }
     // Planes no longer shown.
@@ -290,7 +304,7 @@ export function FlightMap({
       entry.line?.remove();
       markers.current.delete(id);
     }
-  }, [planes, selectedId, ready, palette.heading]);
+  }, [planes, selectedId, ready, view, palette.heading]);
 
   // A newly selected plane that's off-screen (picked from the list) is brought into view: the map
   // fits both you and it, never zooming in further, and stops following you ("Back to me" returns).

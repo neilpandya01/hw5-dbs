@@ -42,9 +42,9 @@ flowchart TD
   R -->|location blocked or failing| P["Explains + Try again; uses my last saved location"]
   R --> F{Flight data?}
   F -- "Loading" --> L["Loading flights…"]
-  F -- "Connecting / starting" --> K["'Connecting to live updates…' or 'first update in under 30 s'"]
+  F -- "Connecting / starting" --> K["'Connecting to live updates…' or 'looking for planes near you'"]
   F -- "Fresh (a run in the last ~3 intervals)" --> M["Planes on the map and in two lists: in my circle, nearby"]
-  F -- "Stale (a few missed updates)" --> S["'No update for 2 min: positions may be out of date'; old pings can't be caught"]
+  F -- "Stale (a few missed updates)" --> S["'No update for 2 min' (worded for whether planes are still shown); old pings can't be caught"]
   F -- "Down" --> D["'Flight data can't be displayed right now. Come back later.'"]
   F -- "Daily limit reached (app-wide)" --> X["'Sky Hunt has used today's flight data limit. Come back later.' + about when"]
   M --> O["Open a plane: airline + logo, aircraft type, updated X s ago"]
@@ -63,9 +63,11 @@ flowchart TD
 **States**
 - Loading: a skeleton, then "Loading flights…".
 - Finding me: a spinner next to the location line. Following: "Near Chicago, Illinois · Following your location". The map follows me until I drag it; "Back to me" re-centers. Zoom with + and −, scroll, or pinch.
-- Connecting: "Connecting to live updates…" while the live connection starts or reconnects (it reconnects on its own; after 45 seconds without it, the page says flight data is unavailable).
-- Starting: "Live · first update in under 30 s" when you've just arrived and the worker hasn't fetched your area yet; the map says "Looking for planes near you…".
-- Fresh: "Live · updated 12 s ago" (plus "every minute today" when the shared budget is 75–90% used). It stays fresh until about 3 update intervals pass with no successful run (under 2 minutes normally).
+- The status line above the map is the only flight-data message, worded for what's on the map:
+  - Connecting: "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are shown (it reconnects on its own; after 45 seconds without it, the page says flight data is unavailable).
+  - Starting: "Live · looking for planes near you (first update in under 30 s)" when you've just arrived.
+  - Fresh: "Live · updated 12 s ago · 8 planes within 15 mi" or "… · no planes within 15 mi right now" (plus "updates every minute today" when the shared budget is 75–90% used). It stays fresh until about 3 update intervals pass with no successful run (under 2 minutes normally).
+  - Stale: "No update for 2 min · these positions may be out of date" while planes are shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off.
 - Stale, down, and daily limit: as in the chart, each shown once (down and limit as a banner, with no extra pill). Down also covers the worker not running at all (no run for 5 minutes) and a lost live connection. Down and limit hide the planes; the map and collection still work.
 - Inside an airport zone: a note that only planes outside the grey zone can be caught.
 - Opening a plane (on the map or in the lists) marks it on the map (the same size, drawn bold in the accent color, on top of others; its direction line stays grey) and shows its card directly below the map, before everything else, with Catch. The page scrolls only as much as needed to show the card; from the lists, it scrolls back up to the map, and if the plane is off-screen the map moves to show it (and you). Close it with Close, or by tapping empty map.
