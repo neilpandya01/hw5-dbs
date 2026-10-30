@@ -2,7 +2,7 @@ import { Budget, DAILY_BUDGET, INTERVAL_S } from "./budget.js";
 import { cellCenter, cellOf } from "./cells.js";
 import { changed, keyOf } from "./changes.js";
 import { toSighting } from "./classify.js";
-import { FI_DAILY_CAP, MESSAGE_OVERHEAD_BYTES, paceFor, RUN_MESSAGE_BYTES } from "./limits.js";
+import { FI_DAILY_CAP, MESSAGE_OVERHEAD_BYTES, paceFor, PLAY_LIMIT_S, RUN_MESSAGE_BYTES } from "./limits.js";
 import { RateLimited } from "./source.js";
 
 // One worker call. Supabase Cron calls the Edge Function every 30 seconds; each call starts from
@@ -12,6 +12,8 @@ import { RateLimited } from "./source.js";
 //   2. How fast may we go today? (limits.js: the free plan's daily share, metered by the worker itself)
 //   3a. fast:   adsb.fi, one zone every 2 seconds, taking turns (1 zone: each updated every 2 s;
 //               2 zones: every 4 s; ... up to 8 zones). adsb.fi allows 1 request per second.
+//               A zone where everyone watching has used today's 2 hours of Radar gets one turn per call
+//               instead (every 30 s), slotted between the fast turns.
 //   3b. normal: one pass over up to 4 zones, a request every 1.1 s: adsb.fi first, adsb.lol as fallback.
 //               Used when today's fast allowance is spent, or adsb.fi is refusing (then adsb.lol, within
 //               its 500-a-day budget: every 30 s, every 60 s when 75-90% used, paused at 90%).
@@ -40,16 +42,25 @@ const FI = "adsb.fi";
 const LOL = "adsb.lol";
 const iso = (ms) => new Date(ms).toISOString();
 
-/** Zones with someone active, busiest first, and how many people are watching each. */
-export function zonesOf(hunters) {
-  const counts = new Map();
+/** Has this person used today's 2 hours of Radar (UTC day)? Past that, their updates slow to every 30 s. */
+export function overPlayLimit(h, now) {
+  return h.playDay === iso(now).slice(0, 10) && (h.playSeconds ?? 0) >= PLAY_LIMIT_S;
+}
+
+/**
+ * Zones with someone active, busiest first: how many people are watching each, and how many of them
+ * are still under today's 2 hours (`fastViewers`; a zone with none gets 30-second updates).
+ */
+export function zonesOf(hunters, now = Date.now()) {
+  const zones = new Map();
   for (const h of hunters) {
     const cell = cellOf(h.lat, h.lon);
-    counts.set(cell, (counts.get(cell) ?? 0) + 1);
+    const z = zones.get(cell) ?? { cell, viewers: 0, fastViewers: 0 };
+    z.viewers += 1;
+    if (!overPlayLimit(h, now)) z.fastViewers += 1;
+    zones.set(cell, z);
   }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([cell, viewers]) => ({ cell, viewers }));
+  return [...zones.values()].sort((a, b) => b.viewers - a.viewers || a.cell.localeCompare(b.cell));
 }
 
 /**
@@ -133,7 +144,7 @@ export async function runOnce(state, deps) {
   const fiAvailable = () => !coolingDown(FI) && state.fi24h + run.fi_requests < FI_DAILY_CAP;
 
   /** Save the zone's planes that changed, as sightings and as one frame (one Realtime message per viewer). */
-  async function applyZone(cell, fresh) {
+  async function applyZone(cell, fresh, pace) {
     const seen = new Set();
     const upserts = [];
     for (const row of fresh) {
@@ -151,7 +162,7 @@ export async function runOnce(state, deps) {
     run.deleted += removed.length;
     if (!upserts.length && !removed.length) return;
     const t = now();
-    const frame = { cell, seq: t, at: iso(t), planes: upserts, removed };
+    const frame = { cell, seq: t, at: iso(t), pace, planes: upserts, removed };
     await db.writeFrame(frame);
     const v = viewers.get(cell) ?? 0;
     run.messages_est += v;
@@ -159,7 +170,7 @@ export async function runOnce(state, deps) {
   }
 
   /** One request for one zone from one source. True if it answered and was saved. */
-  async function fetchZone(cell, source) {
+  async function fetchZone(cell, source, pace) {
     attempted.add(cell);
     run.requests += 1;
     if (source === FI) run.fi_requests += 1;
@@ -175,7 +186,7 @@ export async function runOnce(state, deps) {
         const row = toSighting(ac, cell, sourceNow);
         if (row) fresh.push(row);
       }
-      await applyZone(cell, fresh);
+      await applyZone(cell, fresh, pace);
       answered.add(cell);
       run.source = source;
       return true;
@@ -186,14 +197,22 @@ export async function runOnce(state, deps) {
     }
   }
 
-  /** Fast: adsb.fi, one zone every 2 s in turn. False if adsb.fi stopped answering partway. */
-  async function fastLoop(cells) {
+  /**
+   * Fast: adsb.fi, one zone every 2 s in turn. Slowed zones (everyone there past 2 hours today) get one
+   * turn each per call, on the odd ticks, so they're updated every 30 s and requests stay 2 s apart.
+   * False if adsb.fi stopped answering partway.
+   */
+  async function fastLoop(fastCells, slowCells) {
+    const slowQueue = [...slowCells];
+    let next = 0;
     for (let k = 0; k * TICK_MS < FAST_WINDOW_MS; k++) {
       const wait = started + k * TICK_MS - now();
       if (wait > 0) await sleep(wait);
       if (!fiAvailable()) return false;
       run.ticks += 1;
-      if (!(await fetchZone(cells[k % cells.length], FI))) return false;
+      const slowTurn = slowQueue.length > 0 && k % 2 === 1;
+      const cell = slowTurn ? slowQueue.shift() : fastCells[next++ % fastCells.length];
+      if (!(await fetchZone(cell, FI, slowTurn ? "normal" : "fast"))) return false;
     }
     return true;
   }
@@ -221,7 +240,7 @@ export async function runOnce(state, deps) {
         if (source === LOL && (coolingDown(LOL) || state.lolBudget.mode(now()) === "paused")) continue;
         if (!first) await sleep(REQUEST_GAP_MS);
         first = false;
-        if (await fetchZone(cell, source)) break;
+        if (await fetchZone(cell, source, mode)) break;
       }
     }
     return mode;
@@ -231,7 +250,7 @@ export async function runOnce(state, deps) {
     // Without the saved planes and the usage so far, saving could rewrite everything or overspend.
     if (state.loadError) throw new Error(state.loadError);
     const hunters = await db.activeHunters(iso(started - ACTIVE_WINDOW_MS));
-    const zones = zonesOf(hunters);
+    const zones = zonesOf(hunters, started);
     viewers = new Map(zones.map((z) => [z.cell, z.viewers]));
     watching = hunters.length;
     run.cells = zones.length;
@@ -248,12 +267,15 @@ export async function runOnce(state, deps) {
       const pace = paceFor(state.messages24h, state.bytes24h);
       if (pace === "stop") {
         run.mode = "paused"; // today's share of the free plan is used up; resumes as old usage ages out
-      } else if (pace === "fast" && fiAvailable()) {
+      } else if (pace === "fast" && fiAvailable() && zones.some((z) => z.fastViewers > 0)) {
         run.mode = "fast";
-        const kept = await fastLoop(zones.slice(0, MAX_FAST_ZONES).map((z) => z.cell));
+        const fastCells = zones.filter((z) => z.fastViewers > 0).slice(0, MAX_FAST_ZONES).map((z) => z.cell);
+        const slowCells = zones.filter((z) => z.fastViewers === 0).slice(0, MAX_PASS_ZONES).map((z) => z.cell);
+        const kept = await fastLoop(fastCells, slowCells);
         // adsb.fi stopped answering: finish this call the old way (adsb.lol, every 30 s).
         if (!kept) run.mode = await pass(zones.slice(0, MAX_PASS_ZONES).map((z) => z.cell));
       } else {
+        // Today's fast allowance is used, adsb.fi is unavailable, or everyone active is past 2 hours.
         run.mode = await pass(zones.slice(0, MAX_PASS_ZONES).map((z) => z.cell));
       }
     }

@@ -18,13 +18,23 @@ export function createDb(url: string, secretKey: string) {
   const sb = createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
   return {
-    /** Rounded locations of everyone active since `sinceIso`. */
+    /** Rounded locations of everyone active since `sinceIso`, and their Radar time today. */
     async activeHunters(sinceIso: string) {
       const rows = check(
-        await sb.from("hunters").select("lat, lon").gte("last_active_at", sinceIso).not("lat", "is", null).not("lon", "is", null),
+        await sb
+          .from("hunters")
+          .select("lat, lon, play_day, play_seconds")
+          .gte("last_active_at", sinceIso)
+          .not("lat", "is", null)
+          .not("lon", "is", null),
         "reading active hunters",
       ) ?? [];
-      return rows.map((r) => ({ lat: Number(r.lat), lon: Number(r.lon) }));
+      return rows.map((r) => ({
+        lat: Number(r.lat),
+        lon: Number(r.lon),
+        playDay: r.play_day as string | null,
+        playSeconds: Number(r.play_seconds ?? 0),
+      }));
     },
 
     /** Every saved plane. Each run starts fresh, so this is how it knows what's already there. */
@@ -52,7 +62,7 @@ export function createDb(url: string, secretKey: string) {
     },
 
     /** One zone's update: the planes that changed, in one row (one Realtime message per viewer). */
-    async writeFrame(frame: { cell: string; seq: number; at: string; planes: Row[]; removed: string[] }) {
+    async writeFrame(frame: { cell: string; seq: number; at: string; pace: string; planes: Row[]; removed: string[] }) {
       check(await sb.from("frames").upsert(frame, { onConflict: "cell" }), "writing the zone's update");
     },
 

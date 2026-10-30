@@ -1,4 +1,4 @@
-import type { Connection, Run, Sighting } from "./flights";
+import type { Connection, Pace, Run, Sighting } from "./flights";
 import { CATCH_RANGE_MI, compass, distanceMi, type LatLon } from "./geo";
 
 // What to show near you, whether each plane can be caught, and how fresh the flight data is.
@@ -85,7 +85,9 @@ export function ago(ms: number, now: number): string {
  *   starting    the worker's latest run had nobody active (you just arrived): looking for planes
  *   stale       no run for 3 intervals plus 15 s (105 s normally, 195 s in slow mode)
  *   fresh       otherwise. `pace` says how often this zone updates: fast (every few seconds), normal
- *               (every 30 s: today's fast allowance is used, or the fallback source is in use), slow (60 s).
+ *               (every 30 s: today's fast allowance is used, adsb.fi is unavailable, or everyone watching
+ *               this zone has played 2 hours today), slow (60 s, adsb.lol's slow mode). It comes from the
+ *               zone's latest bundle when that's recent, else from the latest run.
  *               "Updated" is this zone's latest update, or the latest run if that's newer.
  */
 export type Feed =
@@ -95,7 +97,7 @@ export type Feed =
   | { status: "connecting" }
   | { status: "starting" }
   | { status: "stale"; updatedAt: number }
-  | { status: "fresh"; updatedAt: number; pace: "fast" | "normal" | "slow" };
+  | { status: "fresh"; updatedAt: number; pace: Pace };
 
 /** How long the live connection may be lost before the page says flight data is unavailable. */
 export const OFFLINE_DOWN_MS = 45_000;
@@ -110,6 +112,7 @@ export function feedState(
     offlineSince: number | null;
     run: Run | null;
     frameAt?: number | null;
+    framePace?: Pace | null;
   },
   now: number,
 ): Feed {
@@ -126,6 +129,14 @@ export function feedState(
   const interval = run.mode === "slow" ? 60_000 : 30_000;
   if (now - run.finishedAt > 3 * interval + 15_000) return { status: "stale", updatedAt: run.finishedAt };
   const updatedAt = Math.max(run.finishedAt, flights.frameAt ?? 0);
-  const pace = run.mode === "fast" ? "fast" : run.mode === "slow" ? "slow" : "normal";
+  // The zone's own pace when it has updated in the last minute (zones can differ); else the run's.
+  const recentFrame = flights.frameAt && flights.framePace && now - flights.frameAt < 60_000;
+  const pace: Pace = recentFrame
+    ? flights.framePace!
+    : run.mode === "fast"
+      ? "fast"
+      : run.mode === "slow"
+        ? "slow"
+        : "normal";
   return { status: "fresh", updatedAt, pace };
 }

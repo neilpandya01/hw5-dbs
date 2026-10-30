@@ -44,7 +44,6 @@ flowchart TD
   F -- "Loading" --> L["Loading flights…"]
   F -- "Connecting / starting" --> K["'Connecting to live updates…' or 'Looking for planes near you…'"]
   F -- "Fresh (a run in the last ~3 intervals)" --> M["Planes on the map and in two lists: in my circle, nearby"]
-  F -- "My 2 hours of Radar used today" --> T["'You've used today's 2 hours of Radar' + when it's back; collection still open"]
   F -- "Stale (a few missed updates)" --> S["'No update for 2 min' (worded for whether planes are still shown); old pings can't be caught"]
   F -- "Down" --> D["'Flight data can't be displayed right now. Come back later.'"]
   F -- "Daily limit reached (app-wide)" --> X["'Sky Hunt has reached today's flight data limit. Come back later.'"]
@@ -69,8 +68,8 @@ flowchart TD
   - Starting: "Looking for planes near you…" when you've just arrived.
   - Fresh: "Live · updated 12 s ago · 8 planes within 15 mi" or "… · no planes within 15 mi right now" ("updated" is my zone's latest update). It adds "updating every 30 s right now" when updates have dropped to every 30 seconds, or "updating less often to save today's limit" in the fallback's slow mode. It stays fresh until about 3 worker calls pass with no run (under 2 minutes).
   - Stale: "No update for 2 min · these positions may be out of date" while planes are shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off.
-- Messages never promise a time ("in 30 s", "back by 6 PM"); they say what's happening. The one exception is my own Radar time: it's a fixed rule the app controls, so the page says how much is left and when it resets (midnight UTC).
-- Radar time: each person gets 2 hours a day, counted only while the Radar is open and in front. Once some is used, "1 h 52 min of Radar time left today" shows under the status line. At 0, a panel replaces the status line and planes ("You've used today's 2 hours of Radar … comes back at midnight UTC (in 3 h 12 min). Your collection is still open."), and Catch is refused.
+- Messages never promise a time ("in 30 s", "back by 6 PM"); they say what's happening.
+- Radar time: each person gets 2 hours of fast updates a day, counted only while the Radar is open and in front. There's no timer. Past 2 hours, nothing stops: my zone just updates every 30 s (unless someone else there is still under 2 hours), catching works as usual, and the status line adds "2 h played today, slower updates".
 - Stale, down, and daily limit: as in the chart, each shown once (down and limit as a banner, with no extra pill). Down also covers the worker not running at all (no run for 5 minutes) and a lost live connection. Down and limit hide the planes; the map and collection still work.
 - Inside an airport zone: a note that only planes outside the grey zone can be caught.
 - Opening a plane (on the map or in the lists) marks it on the map (the same size, drawn bold in the accent color, on top of others; its direction line stays grey) and shows its card directly below the map, before everything else, with Catch. The page scrolls only as much as needed to show the card; from the lists, it scrolls back up to the map, and if the plane isn't well in view, the map moves to show it (and you), every time you pick one. Close it with Close, or by tapping empty map.

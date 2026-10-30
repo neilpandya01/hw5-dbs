@@ -27,7 +27,10 @@ export const STOP_AT = 0.9;
  */
 export const FI_DAILY_CAP = 12_000;
 
-/** Each person's Radar time per day (UTC). Enforced in the database (touch_hunter, catch_plane). */
+/**
+ * Each person's fast Radar time per day (UTC), counted by touch_hunter() in the database. Past it they
+ * keep playing; their zone just drops to 30-second updates unless someone else there is still under it.
+ */
 export const PLAY_LIMIT_S = 2 * 60 * 60;
 
 /** Realtime's wrapper around each message (topic, event, schema, commit time...), roughly. */

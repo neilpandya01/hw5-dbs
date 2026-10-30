@@ -309,3 +309,43 @@ test("if the saved state can't be read, the call makes no requests and is record
   assert.equal(run.requests, 0);
   assert.equal(t.db.runs.length, 1);
 });
+
+// Soft daily limit: past 2 hours of Radar today, your zone gets 30-second updates (unless someone else
+// watching it is still under 2 hours). You keep playing.
+const PLAYED_OUT = { playDay: new Date(fixture.now).toISOString().slice(0, 10), playSeconds: 7200 };
+
+test("everyone in a zone past 2 hours today: one update per call (every 30 s), still from adsb.fi", async () => {
+  const t = setup({ hunters: [{ ...CHICAGO, ...PLAYED_OUT }] });
+  const run = await t.call();
+  assert.equal(run.mode, "normal");
+  assert.equal(run.requests, 1);
+  assert.equal(run.fi_requests, 1);
+  assert.equal(t.db.frames[0].pace, "normal");
+});
+
+test("a slowed zone gets one turn per call between a fast zone's turns, 2 s apart", async () => {
+  const t = setup({ hunters: [CHICAGO, { ...MILWAUKEE, ...PLAYED_OUT }] });
+  const run = await t.call();
+  assert.equal(run.mode, "fast");
+  assert.equal(run.ticks, 11);
+  const milwaukee = t.asked.filter((a) => Math.round(a.lat) === 43);
+  assert.equal(milwaukee.length, 1);
+  assert.equal(t.asked.length - milwaukee.length, 10);
+  const gaps = t.asked.slice(1).map((a, i) => a.at - t.asked[i].at);
+  assert.ok(gaps.every((g) => g >= 2_000));
+  const paces = new Set(t.db.frames.map((f) => `${f.cell}:${f.pace}`));
+  assert.ok(paces.has("167_-351:fast"));
+  assert.ok(paces.has("172_-352:normal"));
+});
+
+test("a zone stays fast while anyone watching it is under 2 hours", async () => {
+  const t = setup({ hunters: [{ ...CHICAGO, ...PLAYED_OUT }, CHICAGO] });
+  const run = await t.call();
+  assert.equal(run.mode, "fast");
+  assert.equal(run.fi_requests, 11);
+});
+
+test("2 hours played on an earlier day doesn't count today", async () => {
+  const t = setup({ hunters: [{ ...CHICAGO, playDay: "2026-10-01", playSeconds: 7200 }] });
+  assert.equal((await t.call()).mode, "fast");
+});

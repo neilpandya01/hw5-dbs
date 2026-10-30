@@ -36,13 +36,14 @@ The worker meters itself. For every update it writes, it adds one message per pe
 
 It's a rolling 24 hours, not a midnight reset, so it eases back gradually. The estimate is deliberately simple: it counts each person active in a zone (checked in during the last minute) as one viewer. It doesn't see page loads, a second tab, or a tab hidden for under a minute; the 10% headroom is for those. To check it against reality, compare with **Organization → Usage** in the Supabase dashboard.
 
-### 2. Per person: 2 hours of Radar a day
+### 2. Per person: 2 hours of fast updates a day, then 30-second updates
 
-Without this, one person leaving the Radar open could spend the whole day's fast allowance. With it, a single player can use at most about 18 MB (2 hours at about 9 MB an hour), under a quarter of a day's fast allowance, so at least four people get fast updates each day and everyone can keep playing at the 30-second pace afterward.
+Without this, one person leaving the Radar open could spend the whole day's fast allowance, and everyone after them would get 30-second updates. With it, one player's fast updates cost at most about 18 MB a day (2 hours at about 9 MB an hour), under a quarter of the day's fast allowance, so at least four people get them in full. Nobody is ever stopped: past 2 hours you keep playing and catching, just at the 30-second pace (about 1/5 of the cost).
 
-- `touch_hunter()` (the Radar's check-in every 25 s while it's open and visible) adds the time since the last check-in (at most 30 s, and nothing after a gap of over a minute) to `hunters.play_seconds` for today (UTC). So only time with the Radar in front of you counts.
-- At 2 hours it stops marking you active, so the worker stops fetching for you, and `catch_plane()` refuses with `PLAY_LIMIT`.
-- The Radar shows "X of Radar time left today", and at 0 says it's back at midnight UTC (with the time remaining). The map stops listening for updates. The Collection still works.
+- `touch_hunter()` (the Radar's check-in every 25 s while it's open and in front) marks you active and adds the time since the last check-in (at most 30 s, and nothing after a gap of over a minute) to `hunters.play_seconds` for today (UTC). So only time with the Radar in front of you counts. It returns the seconds left before you're slowed.
+- The worker reads each active person's `play_seconds`. A zone where **everyone watching** has played 2 hours today gets one turn per worker call (every 30 s), slotted between the fast zones' turns so adsb.fi still gets at most one request every 2 s. A zone with anyone still under 2 hours stays fast, so a slowed player never slows down a friend nearby.
+- Each update records its zone's pace (`frames.pace`), so the page knows how fast its own zone is updating.
+- There's no timer on the page. When your zone has been slowed because of your 2 hours, the status line adds a few words: "2 h played today, slower updates". It resets at midnight UTC.
 - People can't write `last_active_at` or `play_seconds` themselves: the `hunters` table only lets the page write `onboarded`, `lat`, `lon`, and `location_at`; activity and Radar time change only through `touch_hunter()` and `catch_plane()`.
 
 ### 3. Per source: request budgets
@@ -62,10 +63,10 @@ The Radar stops checking in when its tab is hidden, so the worker stops fetching
 | Situation | On the Radar |
 |---|---|
 | Normal day | "Live · updated 2 s ago · 9 planes within 15 mi" |
-| Fast allowance used, or adsb.fi refusing or at its daily cap | "Live · updated 12 s ago · … · updating every 30 s right now" |
+| Fast allowance used for everyone, or adsb.fi refusing or at its daily cap | "Live · updated 12 s ago · … · updating every 30 s right now" |
 | adsb.lol's budget 75-90% (adsb.fi unavailable) | "… · updating less often to save today's limit" |
 | 90% of the day's share, both sources refusing, or adsb.fi unavailable with adsb.lol's budget 90% used | Banner: "Sky Hunt has reached today's flight data limit." (planes hidden) |
-| Your 2 hours are used | "You've used today's 2 hours of Radar … comes back at midnight UTC (in 3 h 12 min). Your collection is still open." |
+| You've played 2 hours today (and nobody else in your zone is under 2 hours) | "Live · updated 14 s ago · … · 2 h played today, slower updates" (updates every 30 s; catching works as usual) |
 
 ## Checking usage
 

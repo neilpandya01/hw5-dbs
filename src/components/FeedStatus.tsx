@@ -5,7 +5,18 @@ import { ago, VIEW_MI, type Feed } from "@/lib/nearby";
  * When flight data is down or the daily limit is reached, this shows nothing: the FeedProblem banner
  * says it instead, once.
  */
-export function FeedStatus({ feed, now, shown }: { feed: Feed; now: number; shown: number }) {
+export function FeedStatus({
+  feed,
+  now,
+  shown,
+  playedOut = false,
+}: {
+  feed: Feed;
+  now: number;
+  shown: number;
+  /** This person has used today's 2 hours of fast Radar (their zone may be slowed to every 30 s). */
+  playedOut?: boolean;
+}) {
   const pill = "inline-flex items-center gap-2 self-start rounded-full border px-3 py-1 text-sm";
   const planes = shown === 1 ? "1 plane" : `${shown} planes`;
   const dot = (color: string, pulse = false) => (
@@ -40,7 +51,9 @@ export function FeedStatus({ feed, now, shown }: { feed: Feed; now: number; show
           <span>
             Live · updated {ago(feed.updatedAt, now)} ·{" "}
             {shown > 0 ? `${planes} within ${VIEW_MI} mi` : `no planes within ${VIEW_MI} mi right now`}
-            {feed.pace === "normal" && <span className="text-muted"> · updating every 30 s right now</span>}
+            {feed.pace === "normal" && (
+              <span className="text-muted">{playedOut ? " · 2 h played today, slower updates" : " · updating every 30 s right now"}</span>
+            )}
             {feed.pace === "slow" && <span className="text-muted"> · updating less often to save today&apos;s limit</span>}
           </span>
         </p>

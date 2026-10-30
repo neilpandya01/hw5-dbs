@@ -12,7 +12,7 @@ How data moves from the flight source to your screen (with the chart and the fre
 - **Clerk** for sign-in. Every page except `/sign-in` and `/sign-up` needs an account.
 - **Supabase** for the database and Realtime: `hunters`, `sightings`, `frames` (one bundle per zone update), `runs`, `catches`, with row-level security. Catches are only made by a database function that checks the rules.
 - **The worker** (`supabase/functions/worker/`, a Supabase Edge Function that Supabase Cron calls every 30 seconds): each call runs about 20 seconds and, every 2 seconds, fetches the next zone (grid cell) with someone active from adsb.fi, saves only the planes that changed, and writes them as one bundle so Realtime sends one message per update. With one zone, it's updated every 2 s; with two, each every 4 s. When the day's fast allowance is used, or adsb.fi refuses, it goes back to one pass every 30 s over up to 4 zones, with adsb.lol as the fallback source (within its own 500-a-day budget).
-- **Daily limits** ([docs/usage-limits.md](docs/usage-limits.md)): the app keeps each day to a thirtieth of Supabase's free monthly Realtime messages and egress (fast updates under 50% of that, 30-second updates to 90%, paused beyond), and each person gets 2 hours of Radar a day.
+- **Daily limits** ([docs/usage-limits.md](docs/usage-limits.md)): the app keeps each day to a thirtieth of Supabase's free monthly Realtime messages and egress (fast updates under 50% of that, 30-second updates to 90%, paused beyond), and each person gets 2 hours of 2-second updates a day, then 30-second updates (they keep playing).
 - **Flight data:** [adsb.fi](https://adsb.fi) (free, no key, personal non-commercial use, credited on the Radar), with [adsb.lol](https://adsb.lol) as the fallback (free, no key; © adsb.lol contributors, ODbL). Same format. Airline names: OpenFlights (ODbL). Airline logos: pics.avs.io. Airports: [OurAirports](https://ourairports.com/data/) (public domain).
 - **Map:** Leaflet with Esri's grey Canvas map tiles (no key; © Esri, with OpenStreetMap data).
 - **Location:** only coordinates rounded to about 1 km are ever saved. "Near Chicago, Illinois" comes from BigDataCloud's free reverse-geocoding endpoint.
@@ -74,6 +74,7 @@ The worker is the Edge Function in [`supabase/functions/worker/`](supabase/funct
    - [`20261029000000_worker_cron.sql`](supabase/migrations/20261029000000_worker_cron.sql): turns on `pg_cron` and `pg_net` and calls the worker every 30 seconds (plus hourly cleanup of old runs).
    - [`20261030000000_runs_source.sql`](supabase/migrations/20261030000000_runs_source.sql): records which source answered.
    - [`20261030010000_fast_updates_and_limits.sql`](supabase/migrations/20261030010000_fast_updates_and_limits.sql): `frames` (bundles, in Realtime instead of `sightings`), the usage columns and `worker_usage()`, daily Radar time, and a 29-second timeout for each call.
+   - [`20261030020000_soft_play_limit.sql`](supabase/migrations/20261030020000_soft_play_limit.sql): past 2 hours, slower updates instead of a stop; catching always allowed; `frames.pace`.
 7. **Check it:** **Integrations → Cron** shows `sky-hunt-worker` succeeding every 30 s; `select * from runs order by started_at desc limit 5;` shows a new row every 30 s; **Edge Functions → worker → Logs** shows one `[run]` line per call.
 
 To stop the worker: `select cron.unschedule('sky-hunt-worker');` (re-run the migration to start it again).
@@ -105,7 +106,7 @@ from runs order by started_at desc limit 1;
 | `runs.error` says `adsb.fi refused the request … (HTTP 429)` but `ok` is true and `source` is `adsb.lol` | Both sources limit per IP, and Supabase's Edge Functions share IPs with other projects | Nothing: the fallback answered, and adsb.fi is tried again after 5 minutes |
 | "Sky Hunt has reached today's flight data limit" (runs are `paused`) | `messages_24h` or `bytes_24h` reached 90% of a day's share; or both sources refused (HTTP 429) in the last 5 minutes; or adsb.fi is unavailable and adsb.lol's 500-a-day budget is 90% used | Wait; it resumes on its own (`resume_at` when known). See [docs/usage-limits.md](docs/usage-limits.md) |
 | "updating every 30 s right now" | The day's fast allowance (50% of a day's share) is used, or adsb.fi refused in the last 5 minutes or reached 12,000 requests today | Nothing; it goes back to every 2 s on its own |
-| "You've used today's 2 hours of Radar" | Each person gets 2 hours a day | It comes back at midnight UTC |
+| "2 h played today, slower updates" | You've had the Radar open for 2 hours today, and nobody else in your zone is under 2 hours | Nothing; it's the per-person limit (updates every 30 s). It resets at midnight UTC |
 | The location step says location is blocked or unavailable | Browser permission, or the device's location is off | Follow the steps shown on the page |
 
 While developing, the account banner also shows the technical reason (never on the live site).

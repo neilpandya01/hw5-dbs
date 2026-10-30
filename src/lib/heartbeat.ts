@@ -6,17 +6,13 @@ import { touchHunter } from "./store";
 /** How often an open radar page says "I'm still here". The worker counts anyone seen in the last minute. */
 export const HEARTBEAT_MS = 25_000;
 
-/** Each person's Radar time per day (UTC), the same as touch_hunter() in the database. */
-export const PLAY_LIMIT_S = 2 * 60 * 60;
-
 /**
  * While the radar is open and visible, mark this person active, so the worker keeps fetching planes
  * near them. Stops when the tab is hidden or they leave the page; the worker stops a minute later.
  *
- * Returns the seconds of Radar time left today (null until the first answer). The database counts it:
- * 2 hours a day, so everyone gets a turn within the free plan (docs/usage-limits.md). At 0, it stops
- * marking you active; the check-ins continue (cheaply), so the Radar comes back on its own after
- * midnight UTC.
+ * Returns the seconds of fast Radar time left today (null until the first answer). The database counts
+ * it: 2 hours a day (UTC). Past that you keep playing; the worker just updates your zone every 30 s
+ * instead of every 2 s, unless someone else there is still under 2 hours (docs/usage-limits.md).
  */
 export function useHeartbeat(enabled: boolean): number | null {
   const [left, setLeft] = useState<number | null>(null);

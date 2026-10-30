@@ -199,8 +199,8 @@ export async function finishOnboarding(): Promise<boolean> {
 
 /**
  * "I'm still here": the worker only fetches planes near people active in the last minute.
- * The database also counts today's Radar time (2 hours a day) and stops marking you active when it's
- * used up. Returns the seconds of Radar time left today, or null if it couldn't be checked.
+ * The database also counts today's Radar time; past 2 hours your zone's updates slow to every 30 s.
+ * Returns the seconds left before that (0 = slowed), or null if it couldn't be checked.
  */
 export async function touchHunter(): Promise<number | null> {
   const sb = supabase();
@@ -219,7 +219,6 @@ export type CatchError =
   | "ALREADY_CAUGHT"
   | "GONE"
   | "NO_LOCATION"
-  | "PLAY_LIMIT"
   | "FAILED";
 
 const CODES: CatchError[] = [
@@ -230,7 +229,6 @@ const CODES: CatchError[] = [
   "ALREADY_CAUGHT",
   "GONE",
   "NO_LOCATION",
-  "PLAY_LIMIT",
 ];
 
 /**

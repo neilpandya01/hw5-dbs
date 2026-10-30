@@ -67,9 +67,13 @@ type SightingRow = {
   seen_at: string;
 };
 
+/** How often a zone is being updated: every few seconds, every 30 s, or every 60 s. */
+export type Pace = "fast" | "normal" | "slow";
+
 type FrameRow = {
   cell: string;
   at: string;
+  pace?: Pace;
   planes: SightingRow[];
   removed: string[];
 };
@@ -135,6 +139,8 @@ export type FlightsState = {
   run: Run | null;
   /** When this zone was last updated (its latest bundle), in ms; null until one arrives. */
   frameAt: number | null;
+  /** How often this zone is being updated, from its latest bundle; null until one arrives. */
+  framePace: Pace | null;
 };
 
 const INITIAL: FlightsState = {
@@ -145,6 +151,7 @@ const INITIAL: FlightsState = {
   planes: [],
   run: null,
   frameAt: null,
+  framePace: null,
 };
 
 /** Reconnect this long after the live connection drops. */
@@ -197,7 +204,7 @@ export function useFlights(cell: string | null): FlightsState {
       heard();
       for (const r of frame.planes ?? []) planes.set(r.hex, toSighting(r));
       for (const hex of frame.removed ?? []) planes.delete(hex);
-      publish({ frameAt: frame.at ? Date.parse(frame.at) : Date.now() });
+      publish({ frameAt: frame.at ? Date.parse(frame.at) : Date.now(), framePace: frame.pace ?? null });
     }
 
     function connect() {

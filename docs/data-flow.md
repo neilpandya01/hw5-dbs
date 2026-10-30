@@ -19,7 +19,7 @@ flowchart TD
   PAGE["Next.js page on Vercel"]
   CLERK["Clerk sign-in"]
 
-  PAGE -- "rounded location (when moved 2 km)<br/>+ 'still here' every 25 s (counts Radar time)" --> DB
+  PAGE -- "rounded location (when moved 2 km)<br/>+ 'still here' every 25 s (counts today's Radar time)" --> DB
   CRON -- "POST with x-cron-secret" --> W
   DB -- "who's active, saved planes, last 24 h of usage" --> W
   W -- "fast: one zone every 2 s (taking turns)<br/>or every 30 s, up to 4 zones" --> SRC
@@ -31,12 +31,12 @@ flowchart TD
   PAGE -- "catch_plane(): the database checks the rules" --> DB
 ```
 
-1. **Page → Supabase.** While the Radar is open and visible, it calls `touch_hunter()` every 25 seconds. That marks you active and adds the time to today's Radar time (2 hours a day; after that it stops marking you active). The page also saves your location, rounded to about 1 km, when you've moved about 2 km. Your exact position never leaves the browser.
-2. **Cron → worker.** Every 30 seconds, Supabase Cron calls the worker (an Edge Function) with the cron secret. A call remembers nothing from the last one, so it first reads back what earlier calls left: the saved planes, and the last 24 hours of usage summed by `worker_usage()` (requests per source, the estimated Realtime messages and bytes, and whether a source refused us in the last 5 minutes). Then it reads who was active in the last minute and groups them into **zones** (grid cells of 0.25°, about 17 × 13 miles in Chicago), busiest first. Planes in zones nobody's in anymore are deleted. Nobody active means no requests at all (an `idle` call).
-3. **Worker → flight source.** A call lasts about 20 seconds. Normally it's **fast**: at 0, 2, 4 … 20 seconds (11 times), it asks adsb.fi for the next zone in turn, so one zone is updated every 2 s, two zones every 4 s each, up to 8 zones. It's the **30-second pass** instead (up to 4 zones, one request every 1.1 s, adsb.fi first and adsb.lol if adsb.fi fails) when today's fast allowance is used, adsb.fi refused us in the last 5 minutes, or adsb.fi's 12,000-a-day cap is reached. If adsb.fi stops answering partway through a fast call, the rest of that call is a pass. Each request returns every aircraft within 25 nautical miles of the zone's center, which covers the whole zone plus the 15 miles the page shows.
+1. **Page → Supabase.** While the Radar is open and visible, it calls `touch_hunter()` every 25 seconds. That marks you active and adds the time to today's Radar time (after 2 hours, your zone gets 30-second updates instead of 2-second ones; you keep playing). The page also saves your location, rounded to about 1 km, when you've moved about 2 km. Your exact position never leaves the browser.
+2. **Cron → worker.** Every 30 seconds, Supabase Cron calls the worker (an Edge Function) with the cron secret. A call remembers nothing from the last one, so it first reads back what earlier calls left: the saved planes, and the last 24 hours of usage summed by `worker_usage()` (requests per source, the estimated Realtime messages and bytes, and whether a source refused us in the last 5 minutes). Then it reads who was active in the last minute (and how long each has played today) and groups them into **zones** (grid cells of 0.25°, about 17 × 13 miles in Chicago), busiest first. Planes in zones nobody's in anymore are deleted. Nobody active means no requests at all (an `idle` call).
+3. **Worker → flight source.** A call lasts about 20 seconds. Normally it's **fast**: at 0, 2, 4 … 20 seconds (11 times), it asks adsb.fi for the next zone in turn, so one zone is updated every 2 s, two zones every 4 s each, up to 8 zones. A zone where everyone watching has played 2 hours today gets one turn per call instead (every 30 s), between the fast turns. It's the **30-second pass** instead (up to 4 zones, one request every 1.1 s, adsb.fi first and adsb.lol if adsb.fi fails) when today's fast allowance is used, adsb.fi refused us in the last 5 minutes, or adsb.fi's 12,000-a-day cap is reached. If adsb.fi stops answering partway through a fast call, the rest of that call is a pass. Each request returns every aircraft within 25 nautical miles of the zone's center, which covers the whole zone plus the 15 miles the page shows.
 4. **Worker → Supabase.** Each aircraft becomes a sightings row: commercial, private, or unknown; airline and logo code; aircraft type and rarity; position, altitude, direction; whether it's over an airport's no-catch zone; and when it was pinged. Only planes that are new, moved a quarter mile, changed altitude by 300 ft, turned 10°, or haven't been saved for a minute are written. Planes missing from the answer are deleted. If anything changed, the same changes go into the zone's **one `frames` row** (the changed planes, and the ones that left), so Realtime sends one message per update instead of one per plane. At the end, each call adds one row to `runs`: what it did, and its estimate of the messages and bytes it caused.
 5. **Supabase → page.** Realtime pushes each update of your zone (one message) and each new run to your open page. The page applies the bundle to the planes it loaded and shows the closest ones. When it first opens, reconnects, or you return to the tab, it loads your zone's planes and the latest run directly. A tab hidden for a minute closes its live connection.
-6. **Catching.** `catch_plane()` refuses if your Radar time is used up, then checks the plane's latest ping in `sightings`: commercial, under 90 seconds old, within 5 miles of you (plus half a mile for rounding), and not over an airport. Then it adds the catch. The page can't add catches itself.
+6. **Catching.** `catch_plane()` checks the plane's latest ping in `sightings`: commercial, under 90 seconds old, within 5 miles of you (plus half a mile for rounding), and not over an airport. Then it adds the catch. The page can't add catches itself.
 
 ## Daily limits
 
@@ -47,7 +47,7 @@ Everything is on free plans, so the app limits itself per day: the reasons and n
 | Under 50% of a day's share of Supabase's free Realtime messages and egress (the worker's own estimate, over 24 h) | Fast: one zone every 2 s |
 | 50% to 90% | Every 30 s for everyone |
 | 90% or more | Paused for everyone: "Sky Hunt has reached today's flight data limit." |
-| You've used 2 hours of Radar today | The Radar stops for you until midnight UTC; the Collection still works |
+| Everyone watching your zone has played 2 hours today | Your zone gets 30-second updates; you keep playing and catching. The status line adds "2 h played today, slower updates" |
 | adsb.fi refused in the last 5 minutes, or 12,000 requests today | The 30-second pass with adsb.lol: every 30 s, every 60 s at 75% of its 500-a-day budget, paused at 90% |
 
 A source that refuses is skipped for 5 minutes. Both limit per IP address, and Supabase's Edge Functions share outgoing addresses with other projects, so either can refuse even when Sky Hunt has used little.
@@ -63,9 +63,9 @@ From the latest row in `runs`, your zone's latest bundle, and the page's own liv
 - **Connecting:** the live connection is starting or reconnecting (under 45 seconds): "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are on the map.
 - **Starting:** the latest run was `idle` (you just arrived, so the worker hasn't seen you yet): "Looking for planes near you…".
 - **Stale:** no run for 3 intervals plus 15 seconds (105 s; 195 s in slow mode): "No update for 2 min · these positions may be out of date" when planes are still shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off (after 2 minutes). Old positions aren't catchable.
-- **Fresh:** "Live · updated 2 s ago · 8 planes within 15 mi" (or "no planes within 15 mi right now"). "Updated" is the newer of your zone's latest bundle and the latest run. When it isn't fast, it adds "updating every 30 s right now" (the 30-second pass) or "updating less often to save today's limit" (slow mode).
+- **Fresh:** "Live · updated 2 s ago · 8 planes within 15 mi" (or "no planes within 15 mi right now"). "Updated" is the newer of your zone's latest bundle and the latest run. The pace comes from your zone's latest bundle (zones can differ). When it isn't fast, it adds "updating every 30 s right now" (the 30-second pass), "2 h played today, slower updates" (your zone is slowed because of your 2 hours), or "updating less often to save today's limit" (slow mode).
 
-The status line is the only message about flight data on the Radar; down and limit replace it with one banner. Under it, "X of Radar time left today" appears once you've used some; when it reaches 0, a panel replaces both and says the Radar is back at midnight UTC.
+The status line is the only message about flight data on the Radar; down and limit replace it with one banner. There's no timer; past 2 hours of play, the fresh line just adds "2 h played today, slower updates" when your zone has been slowed.
 
 The page reconnects on its own when the live connection drops (after 3 seconds), and if it hears nothing for 75 seconds it reloads what's saved and reconnects.
 
