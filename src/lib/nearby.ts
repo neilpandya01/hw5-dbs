@@ -65,10 +65,16 @@ export function planeType(p: Pick<Sighting, "typeName" | "typeCode">): string {
   return p.typeName ?? (p.typeCode ? `Type ${p.typeCode}` : "Type unknown");
 }
 
+/**
+ * "Just now" covers the first few seconds, so with updates every 2 s the status line and cards read
+ * "just now" steadily instead of flickering between "just now" and "2 s ago".
+ */
+export const JUST_NOW_S = 6;
+
 /** "just now", "12 s ago", "3 min ago". */
 export function ago(ms: number, now: number): string {
   const s = Math.max(0, Math.round((now - ms) / 1000));
-  if (s < 3) return "just now";
+  if (s < JUST_NOW_S) return "just now";
   if (s < 60) return `${s} s ago`;
   return `${Math.floor(s / 60)} min ago`;
 }

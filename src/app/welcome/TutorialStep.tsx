@@ -7,6 +7,7 @@ import { Radar, type RadarZone } from "@/components/Radar";
 import { RarityBadge } from "@/components/RarityBadge";
 import { airportsNear, noCatchZoneAt, useAirports } from "@/lib/airports";
 import { CATCH_RANGE_MI, compass, distanceMi, moveBy, offsetMi, type LatLon } from "@/lib/geo";
+import { JUST_NOW_S } from "@/lib/nearby";
 import { useNearestPlace } from "@/lib/nearestPlace";
 import { finishOnboarding } from "@/lib/store";
 
@@ -179,7 +180,7 @@ export function TutorialStep({
 
         {flying && (
           <p className="text-center text-sm text-muted">
-            Position updated {sinceUpdate < 2 ? "just now" : `${sinceUpdate} s ago`} · updates every 2 seconds
+            Position updated {sinceUpdate < JUST_NOW_S ? "just now" : `${sinceUpdate} s ago`} · updates every 2 seconds
           </p>
         )}
 
@@ -210,7 +211,7 @@ export function TutorialStep({
             title={PRACTICE.airline}
             iata={PRACTICE.iata}
             aircraft={PRACTICE.aircraft}
-            updated={`Updated ${sinceUpdate < 2 ? "just now" : `${sinceUpdate} s ago`}`}
+            updated={`Updated ${sinceUpdate < JUST_NOW_S ? "just now" : `${sinceUpdate} s ago`}`}
             block={
               !inRange
                 ? `Its last ping was outside your ${CATCH_RANGE_MI}-mile ring. Wait for the next update.`

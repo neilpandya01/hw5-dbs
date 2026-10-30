@@ -66,7 +66,7 @@ flowchart TD
 - The status line above the map is the only flight-data message, worded for what's on the map:
   - Connecting: "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are shown. It reconnects on its own.
   - Starting: "Looking for planes near you…" when you've just arrived.
-  - Fresh: "Live · updated 2 s ago · 8 planes within 15 mi" or "… · no planes within 15 mi right now". When updates have slowed, it adds a few words: "updating every 30 s right now", "2 h played today, slower updates" (after 2 hours of Radar today), or "updating less often to save today's limit".
+  - Fresh: "Live · updated just now · 8 planes within 15 mi" or "… · no planes within 15 mi right now". "Just now" covers the first 6 seconds after an update, so it doesn't flicker with 2-second updates; after that it counts ("8 s ago"). When updates have slowed, it adds a few words: "updating every 30 s right now", "2 h played today, slower updates" (after 2 hours of Radar today), or "updating less often to save today's limit".
   - Stale: "No update for 2 min · these positions may be out of date" while planes are shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off.
 - Messages never promise a time ("in 30 s", "back by 6 PM"); they say what's happening.
 - After 2 hours of Radar in a day, nothing stops and there's no timer: updates may just slow to every 30 seconds, and catching works as usual.
