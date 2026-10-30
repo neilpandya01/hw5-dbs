@@ -24,17 +24,17 @@ const PRACTICE = {
   heading: 70,
 };
 /**
- * It moves like live flight data: a new position every 10 to 15 seconds, not smoothly.
- * At about 450 mph that's a jump of 1.25 to 1.9 miles per update. It passes a little to one side
- * of you, enters the ring after an update or two, stays catchable for about 80 seconds
- * (about 6 updates), and loops back if it leaves.
+ * It moves like the live Radar: a new position every 2 seconds (the worker's fast updates).
+ * At about 450 mph that's a jump of a quarter mile per update. It passes a little to one side
+ * of you, enters the ring about 13 seconds in, stays catchable for about 80 seconds, and loops
+ * back if it leaves.
  */
 const SPEED_MI_PER_S = 0.125;
 const START_MI = 6.5;
 const SIDE_MI = 1.2;
 const LOOP_S = (2 * START_MI) / SPEED_MI_PER_S;
-const UPDATE_MIN_S = 10;
-const UPDATE_MAX_S = 15;
+/** Seconds between position updates, like the live Radar. */
+const UPDATE_S = 2;
 /** How far out the practice radar reaches: its edge is 1.5 times the catch range. */
 const VIEW_MI = CATCH_RANGE_MI * 1.5;
 
@@ -46,25 +46,17 @@ function practicePosition(center: LatLon, seconds: number): LatLon {
   return moveBy(center, dir.x * along + side.x * SIDE_MI, dir.y * along + side.y * SIDE_MI);
 }
 
-/**
- * Flight time of the last position update, and when it arrived. While running, a new update
- * lands every 10 to 15 seconds (chosen at random each time, like a real feed).
- */
+/** Flight time of the last position update, and when it arrived. While running, one lands every 2 seconds. */
 function useFlightUpdates(running: boolean): { flightSeconds: number; updatedAt: number } {
   const [state, setState] = useState({ flightSeconds: 0, updatedAt: 0 });
   useEffect(() => {
     if (!running) return;
-    let timer: ReturnType<typeof setTimeout>;
-    const schedule = () => {
-      const wait = UPDATE_MIN_S + Math.random() * (UPDATE_MAX_S - UPDATE_MIN_S);
-      timer = setTimeout(() => {
-        setState((s) => ({ flightSeconds: s.flightSeconds + wait, updatedAt: Date.now() }));
-        schedule();
-      }, wait * 1000);
-    };
     queueMicrotask(() => setState((s) => (s.updatedAt ? s : { ...s, updatedAt: Date.now() })));
-    schedule();
-    return () => clearTimeout(timer);
+    const timer = setInterval(
+      () => setState((s) => ({ flightSeconds: s.flightSeconds + UPDATE_S, updatedAt: Date.now() })),
+      UPDATE_S * 1000,
+    );
+    return () => clearInterval(timer);
   }, [running]);
   return state;
 }
@@ -84,7 +76,7 @@ function useSecondsSince(time: number): number {
 /**
  * Step 3: a short practice round on a radar centered on you.
  *   1. Here's your radar: you in the middle, the dashed ring is your catch range, grey zones are airports.
- *   2. A practice plane flies in, moving every 10 to 15 seconds. Tap it (or use the list below).
+ *   2. A practice plane flies in, moving every 2 seconds. Tap it (or use the list below).
  *   3. Its card: who it is, how rare, how far. Catch works once it's inside the ring, not over an airport.
  *   4. Caught. Start hunting.
  */
@@ -151,7 +143,7 @@ export function TutorialStep({
     },
     spot: {
       title: "A plane is coming.",
-      body: "Like real flight data, its position updates every 10 to 15 seconds. Faded means it can't be caught yet. Tap the plane to see who it is.",
+      body: "Like real flight data, its position updates every 2 seconds. Faded means it can't be caught yet. Tap the plane to see who it is.",
     },
     card: {
       title: "Catch it while it's in range.",
@@ -187,7 +179,7 @@ export function TutorialStep({
 
         {flying && (
           <p className="text-center text-sm text-muted">
-            Position updated {sinceUpdate < 2 ? "just now" : `${sinceUpdate} s ago`} · updates every 10–15 seconds
+            Position updated {sinceUpdate < 2 ? "just now" : `${sinceUpdate} s ago`} · updates every 2 seconds
           </p>
         )}
 

@@ -29,7 +29,7 @@ flowchart TD
 - Every page except `/sign-in` and `/sign-up` needs an account. Signing out is in the account menu (top right).
 - Location is required: there's no skip. If the browser blocks it, the step says how to allow it (the icon left of the address bar → Location → Allow), with Try again.
 - Each step has its own URL (`/welcome?step=overview|location|tutorial`), so Back goes to the previous step. Reloading lands on the step you'd reached, never past an unanswered one.
-- The practice plane is made up and its catch isn't saved. Like real flight data, its position jumps every 10 to 15 seconds (it cruises at 24,000 ft, about 450 mph), so it's catchable for about 80 seconds per pass. Grey airport zones near you show on the practice radar too.
+- The practice plane is made up and its catch isn't saved. Like the live Radar, its position updates every 2 seconds (it cruises at 24,000 ft, about 450 mph), and it's catchable for about 80 seconds per pass. Grey airport zones near you show on the practice radar too.
 - If your account can't be loaded, a banner says so at the top (while developing, with the technical reason). If the browser finds you but the save fails, the step says "We found you, but couldn't save it to your account." and stays put; finishing onboarding works the same way.
 
 ## Main flow
