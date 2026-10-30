@@ -20,7 +20,7 @@ The numbers live in code in [`supabase/functions/worker/src/limits.js`](../supab
 
 Fast updates send each zone's changes every 2 seconds. If each plane were its own message (how Sky Hunt first worked), one person watching Chicago (about 45 planes, most of them moving a quarter mile every few seconds) would receive about 15 messages a second: **about 54,000 an hour**, most of a day's share in one hour, and a handful of players would hit the 100-a-second cap.
 
-So the worker writes each zone's update as **one row** in `frames`: the planes that changed and the ones that left. Realtime sends it as **one message** per person watching. One person in fast mode receives about **1,900 messages an hour** (1,800 updates plus 120 run records). The bytes are about the same either way (the same planes travel), so **egress becomes the limit that matters**.
+So the worker writes each zone's update as **one row** in `frames`: the planes that changed and the ones that left. Realtime sends it as **one message** per person watching. One person in fast mode receives about **1,440 messages an hour** (11 updates per 30-second call plus one run record, measured on Oct 30, 2026 over Chicago). The bytes are about the same either way (the same planes travel), so **egress becomes the limit that matters**.
 
 ## The limits
 
@@ -30,15 +30,15 @@ The worker meters itself. For every update it writes, it adds one message per pe
 
 | Used in the last 24 h (the larger of messages and bytes, as a share of a day's share) | Updates | Why this line |
 |---|---|---|
-| Under 50% | **Fast**: one zone every 2 s, taking turns (1 zone: every 2 s; 2 zones: every 4 s each; up to 8 zones) | Fast costs about 13 MB per viewer-hour, so half a day's share covers about 6 viewer-hours of fast play a day |
-| 50% to 90% | **Every 30 s** for everyone (up to 4 zones) | About 1.7 MB per viewer-hour, about 1/8 of fast: roughly 40 more viewer-hours |
+| Under 50% | **Fast**: one zone every 2 s, taking turns (1 zone: every 2 s; 2 zones: every 4 s each; up to 8 zones) | Measured: about 9 MB per viewer-hour over Chicago (about 77 KB per 30-second call: 11 updates of about 19 changed planes each), so half a day's share (83 MB) covers about 9 viewer-hours of fast play a day |
+| 50% to 90% | **Every 30 s** for everyone (up to 4 zones) | Estimated at about 1.7 MB per viewer-hour (one update of most of the zone's planes every 30 s), about 1/5 of fast: roughly 40 more viewer-hours |
 | 90% or more | **Paused** for everyone ("Sky Hunt has reached today's flight data limit") | The last 10% is headroom for what the worker can't see: page loads, collections, reconnects |
 
 It's a rolling 24 hours, not a midnight reset, so it eases back gradually. The estimate is deliberately simple and errs high (it counts everyone active in a zone as watching).
 
 ### 2. Per person: 2 hours of Radar a day
 
-Without this, one person leaving the Radar open could spend the whole day's fast allowance. With it, a single player can use at most about a third of a day's fast share, so several people get fast updates each day and everyone can keep playing at the 30-second pace afterward.
+Without this, one person leaving the Radar open could spend the whole day's fast allowance. With it, a single player can use at most about 18 MB (2 hours at about 9 MB an hour), under a quarter of a day's fast allowance, so at least four people get fast updates each day and everyone can keep playing at the 30-second pace afterward.
 
 - `touch_hunter()` (the Radar's check-in every 25 s) adds the time since the last check-in (at most 30 s, and nothing after a gap of over a minute) to `hunters.play_seconds` for today (UTC).
 - At 2 hours it stops marking you active, so the worker stops fetching for you, and `catch_plane()` refuses with `PLAY_LIMIT`.
@@ -78,3 +78,14 @@ from runs order by started_at desc limit 1;
 ```
 
 Compare with **Organization → Usage** in the Supabase dashboard, which shows the real Realtime messages and egress for the month.
+
+## Measured (Oct 30, 2026, one player over Chicago, fast mode)
+
+| Per 30-second call | Value |
+|---|---|
+| Time | 20.2 s (11 adsb.fi requests, no refusals), well under Cron's 30 s and pg_net's 29 s timeout |
+| Planes in the zone | about 42 |
+| Planes changed per 2-second update | about 19 (about half: airliners move a quarter mile every 3 to 4 s) |
+| Realtime messages | 12 (11 updates + 1 run record) |
+| Estimated bytes | about 77 KB |
+| Per viewer-hour | about 1,440 messages and 9 MB |
