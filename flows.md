@@ -1,6 +1,6 @@
 # Flows
 
-Sky Hunt's flows: the first visit (signing up and onboarding), the main flow, and the collection.
+Sky Hunt's flows: the first visit (signing up and onboarding), the main flow, and the collection. This is what players see and every message they read; why the data behaves as it does is in [docs/data-flow.md](docs/data-flow.md) and [docs/usage-limits.md](docs/usage-limits.md).
 
 ## First visit
 
@@ -43,10 +43,10 @@ flowchart TD
   R --> F{Flight data?}
   F -- "Loading" --> L["Loading flights…"]
   F -- "Connecting / starting" --> K["'Connecting to live updates…' or 'Looking for planes near you…'"]
-  F -- "Fresh (a run in the last ~3 intervals)" --> M["Planes on the map and in two lists: in my circle, nearby"]
+  F -- "Fresh" --> M["Planes on the map and in two lists: in my circle, nearby"]
   F -- "Stale (a few missed updates)" --> S["'No update for 2 min' (worded for whether planes are still shown); old pings can't be caught"]
-  F -- "Down" --> D["'Flight data can't be displayed right now. Come back later.'"]
-  F -- "Daily limit reached (app-wide)" --> X["'Sky Hunt has reached today's flight data limit. Come back later.'"]
+  F -- "Down" --> D["Banner: flight data can't be displayed"]
+  F -- "Daily limit reached (app-wide)" --> X["Banner: today's flight data limit"]
   M --> O["Open a plane: airline + logo, aircraft type, updated X s ago"]
   M --> Q["Or press Catch on its row in 'In your circle'"]
   Q --> C
@@ -58,19 +58,21 @@ flowchart TD
 - Planes out to 15 miles: at most 12 inside my 5-mile circle and 15 outside it, closest first.
 - Each plane points the way it's flying, with a short dashed line ahead of its nose (part of the icon, so it always lines up). Faded planes can't be caught.
 - Commercial flights show their airline. Small planes, helicopters, and business jets are "Private plane"; anything without a callsign or type, or not recognized, is "Unknown aircraft". Neither can be caught.
-- Positions update every 2 seconds when I'm the only zone being watched (every 4 s with two zones, and so on). Once the app has used today's fast allowance, or the main source is refusing, they update every 30 seconds (every minute when the fallback's budget runs low), so planes jump rather than glide. Why: [docs/usage-limits.md](docs/usage-limits.md).
+- Positions update every few seconds. When a daily limit applies or the backup source is in use, every 30 seconds (or every minute), so planes jump rather than glide.
 
 **States**
 - Loading: a skeleton, then "Loading flights…".
 - Finding me: a spinner next to the location line. Following: "Near Chicago, Illinois · Following your location". The map follows me until I drag it; "Back to me" re-centers. Zoom with + and −, scroll, or pinch.
 - The status line above the map is the only flight-data message, worded for what's on the map:
-  - Connecting: "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are shown (it reconnects on its own; after 45 seconds without it, the page says flight data is unavailable).
+  - Connecting: "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are shown. It reconnects on its own.
   - Starting: "Looking for planes near you…" when you've just arrived.
-  - Fresh: "Live · updated 12 s ago · 8 planes within 15 mi" or "… · no planes within 15 mi right now" ("updated" is my zone's latest update). It adds "updating every 30 s right now" when updates have dropped to every 30 seconds, or "updating less often to save today's limit" in the fallback's slow mode. It stays fresh until about 3 worker calls pass with no run (under 2 minutes).
+  - Fresh: "Live · updated 2 s ago · 8 planes within 15 mi" or "… · no planes within 15 mi right now". When updates have slowed, it adds a few words: "updating every 30 s right now", "2 h played today, slower updates" (after 2 hours of Radar today), or "updating less often to save today's limit".
   - Stale: "No update for 2 min · these positions may be out of date" while planes are shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off.
 - Messages never promise a time ("in 30 s", "back by 6 PM"); they say what's happening.
-- Radar time: each person gets 2 hours of fast updates a day, counted only while the Radar is open and in front. There's no timer. Past 2 hours, nothing stops: my zone just updates every 30 s (unless someone else there is still under 2 hours), catching works as usual, and the status line adds "2 h played today, slower updates".
-- Stale, down, and daily limit: as in the chart, each shown once (down and limit as a banner, with no extra pill). Down also covers the worker not running at all (no run for 5 minutes) and a lost live connection. Down and limit hide the planes; the map and collection still work.
+- After 2 hours of Radar in a day, nothing stops and there's no timer: updates may just slow to every 30 seconds, and catching works as usual.
+- Down and daily limit replace the status line with one banner, and hide the planes; the map and collection still work.
+  - Down: "Flight data can't be displayed right now." / "Come back later. Your map and collection still work."
+  - Daily limit: "Sky Hunt has reached today's flight data limit." / "Flight updates are paused for everyone until the limit resets. Come back later."
 - Inside an airport zone: a note that only planes outside the grey zone can be caught.
 - Opening a plane (on the map or in the lists) marks it on the map (the same size, drawn bold in the accent color, on top of others; its direction line stays grey) and shows its card directly below the map, before everything else, with Catch. The page scrolls only as much as needed to show the card; from the lists, it scrolls back up to the map, and if the plane isn't well in view, the map moves to show it (and you), every time you pick one. Close it with Close, or by tapping empty map.
 - Below the map, **In your circle** lists each plane with its own **Catch** button, so several can be caught in a row without opening anything. When one can't be caught, the row says why in a word or two ("Private", "Over ORD", "Caught today", "Waiting for update"). After a catch, the row (and card) show "Caught · +25 pts". **Nearby, outside your circle** is view-only: tap a plane to see it on the map.

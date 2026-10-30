@@ -2,7 +2,7 @@
 
 Sky Hunt runs entirely on free plans (Supabase, Vercel, Clerk) and two free flight APIs. The assignment asks us to stay on the free tier, and a free Supabase project that runs past its monthly quotas can be restricted, which would take the game down for everyone until the next month. So the app limits itself **per day**: each day may use about one thirtieth of a month's allowance. This page lists every limit, the number behind it, and what a player sees when it's reached.
 
-The numbers live in code in [`supabase/functions/worker/src/limits.js`](../supabase/functions/worker/src/limits.js) (the worker) and in the database functions in [`supabase/migrations/`](../supabase/migrations/) (per person).
+The numbers live in [`supabase/functions/worker/src/limits.js`](../supabase/functions/worker/src/limits.js) (the worker) and the database functions in [`supabase/migrations/`](../supabase/migrations/) (Radar time). How the worker and page fit together is in [data-flow.md](data-flow.md).
 
 ## The free plans we have to fit in
 
@@ -43,7 +43,7 @@ Without this, one person leaving the Radar open could spend the whole day's fast
 - `touch_hunter()` (the Radar's check-in every 25 s while it's open and in front) marks you active and adds the time since the last check-in (at most 30 s, and nothing after a gap of over a minute) to `hunters.play_seconds` for today (UTC). So only time with the Radar in front of you counts. It returns the seconds left before you're slowed.
 - The worker reads each active person's `play_seconds`. A zone where **everyone watching** has played 2 hours today gets one turn per worker call (every 30 s), slotted between the fast zones' turns so adsb.fi still gets at most one request every 2 s. A zone with anyone still under 2 hours stays fast, so a slowed player never slows down a friend nearby.
 - Each update records its zone's pace (`frames.pace`), so the page knows how fast its own zone is updating.
-- There's no timer on the page. When your zone has been slowed because of your 2 hours, the status line adds a few words: "2 h played today, slower updates". It resets at midnight UTC.
+- There's no timer on the page; when your zone has been slowed because of your 2 hours, the status line says so in a few words. Radar time resets at midnight UTC.
 - People can't write `last_active_at` or `play_seconds` themselves: the `hunters` table only lets the page write `onboarded`, `lat`, `lon`, and `location_at`; activity and Radar time change only through `touch_hunter()` and `catch_plane()`.
 
 ### 3. Per source: request budgets
@@ -60,13 +60,7 @@ The Radar stops checking in when its tab is hidden, so the worker stops fetching
 
 ## What a player sees
 
-| Situation | On the Radar |
-|---|---|
-| Normal day | "Live · updated 2 s ago · 9 planes within 15 mi" |
-| Fast allowance used for everyone, or adsb.fi refusing or at its daily cap | "Live · updated 12 s ago · … · updating every 30 s right now" |
-| adsb.lol's budget 75-90% (adsb.fi unavailable) | "… · updating less often to save today's limit" |
-| 90% of the day's share, both sources refusing, or adsb.fi unavailable with adsb.lol's budget 90% used | Banner: "Sky Hunt has reached today's flight data limit." (planes hidden) |
-| You've played 2 hours today (and nobody else in your zone is under 2 hours) | "Live · updated 14 s ago · … · 2 h played today, slower updates" (updates every 30 s; catching works as usual) |
+Mostly nothing: the status line on the Radar says when updates are every 30 s or 60 s, or that your 2 hours slowed them, and a banner replaces it when updates are paused. The exact wording is in [flows.md](../flows.md).
 
 ## Checking usage
 
