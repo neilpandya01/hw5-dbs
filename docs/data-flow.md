@@ -8,7 +8,7 @@ The first version of this chart was committed before any code (commit `0eb87b7`)
 
 ```mermaid
 flowchart TD
-  SRC["adsb.lol<br/>free, no key, 500 requests/day"]
+  SRC["adsb.lol (adsb.fi as fallback)<br/>free, no key, 500 requests/day"]
   CRON["Supabase Cron<br/>every 30 s"]
   W["Worker: Supabase Edge Function<br/>one run per call"]
   DB["Supabase<br/>hunters · sightings · runs · catches"]
@@ -43,7 +43,7 @@ adsb.lol allows **500 requests per rolling 24 hours** (its `x-ratelimit-limit` h
 | 75% to 90% | Requests every other run (60 s); the runs in between are recorded but skip the request | "Live · updated … · updating less often to save today's limit" |
 | 90% or more (450) | No requests until enough age out (the worker records an estimated `resume_at`) | "Sky Hunt has used today's flight data limit. Come back later." |
 
-A refused request (HTTP 429) also pauses requests for 5 minutes. The worker counts its own requests from `runs` at the start of every call, so nothing is lost between calls. Cron calls about 86,000 times a month, well under the free plan's 500,000 Edge Function calls.
+A refused request (HTTP 429) makes the worker skip that source for 5 minutes and ask adsb.fi instead (same data format). Both limit requests per IP address, and Supabase's Edge Functions share outgoing addresses with other projects, so adsb.lol can refuse even when Sky Hunt has used little; only when both sources are refusing does the worker pause. The worker counts its own requests from `runs` at the start of every call, so nothing is lost between calls. Cron calls about 86,000 times a month, well under the free plan's 500,000 Edge Function calls.
 
 ## Freshness states on the page
 

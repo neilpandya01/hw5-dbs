@@ -60,14 +60,14 @@ export function createDb(url: string, secretKey: string) {
       return rows.map((r) => ({ at: Date.parse(r.started_at), requests: r.requests }));
     },
 
-    /** When adsb.lol last refused a request (HTTP 429) since `sinceIso`, in ms, or null. */
-    async lastRateLimitedAt(sinceIso: string) {
+    /** When `source` last refused a request (HTTP 429) since `sinceIso`, in ms, or null. */
+    async lastRateLimitedAt(source: string, sinceIso: string) {
       const rows = check(
         await sb
           .from("runs")
           .select("started_at")
           .gte("started_at", sinceIso)
-          .like("error", "%HTTP 429%")
+          .like("error", `%${source} refused%`)
           .order("started_at", { ascending: false })
           .limit(1),
         "reading the last rate limit",

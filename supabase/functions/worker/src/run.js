@@ -2,7 +2,7 @@ import { Budget, DAILY_BUDGET, DAY_MS, INTERVAL_S } from "./budget.js";
 import { cellCenter, cellOf } from "./cells.js";
 import { keyOf, planChanges } from "./changes.js";
 import { toSighting } from "./classify.js";
-import { RateLimited } from "./source.js";
+import { RateLimited, SOURCE_NAMES } from "./source.js";
 
 // One run of the worker. Supabase Cron calls the Edge Function every 30 seconds, and each call is
 // one run that starts from nothing: `loadState` reads what earlier runs left in the database.
@@ -16,8 +16,10 @@ export const ACTIVE_WINDOW_MS = 60_000;
 export const MAX_CELLS_PER_RUN = 4;
 /** Spacing between requests within a run (adsb.lol allows 4 per second, 60 per minute). */
 export const REQUEST_GAP_MS = 300;
-/** After adsb.lol refuses a request (HTTP 429), make no requests for this long. */
+/** After a source refuses a request (HTTP 429), don't ask that source again for this long. */
 export const COOLDOWN_MS = 5 * 60_000;
+/** Start no new cell after this long, so a run (with fallbacks) stays well under Cron's 30 s spacing. */
+export const RUN_DEADLINE_MS = 18_000;
 /**
  * Slow mode makes requests every 60 s, but Cron calls every 30 s: skip a run's requests if the last
  * requests were under this long ago (a little under 60 s, since Cron's timing wobbles).
@@ -38,37 +40,47 @@ export function activeCells(hunters) {
 
 /**
  * Everything a run needs to know from earlier runs, read from the database:
- * the planes already saved, the requests made in the last 24 hours, and any 429 cooldown.
+ * the planes already saved, the requests made in the last 24 hours, and which sources refused us lately.
  * If reading fails, the run still happens but only records the failure (so the page shows "down").
  */
 export async function loadState(db, now) {
   try {
-    const [history, sightings, rateLimitedAt] = await Promise.all([
+    const [history, sightings, ...limitedAt] = await Promise.all([
       db.requestHistory(iso(now - DAY_MS)),
       db.loadSightings(),
-      db.lastRateLimitedAt(iso(now - COOLDOWN_MS)),
+      ...SOURCE_NAMES.map((name) => db.lastRateLimitedAt(name, iso(now - COOLDOWN_MS))),
     ]);
+    const cooldowns = {};
+    SOURCE_NAMES.forEach((name, i) => {
+      if (limitedAt[i] !== null) cooldowns[name] = limitedAt[i] + COOLDOWN_MS;
+    });
     const lastRequestAt = history.reduce((latest, e) => Math.max(latest, e.at), 0);
     return {
       saved: new Map(sightings.map((row) => [keyOf(row), row])),
       budget: new Budget(DAILY_BUDGET, history),
-      cooldownUntil: rateLimitedAt === null ? 0 : rateLimitedAt + COOLDOWN_MS,
+      cooldowns,
       lastRequestAt,
     };
   } catch (e) {
-    return { saved: new Map(), budget: new Budget(DAILY_BUDGET, []), cooldownUntil: 0, lastRequestAt: 0, loadError: e.message };
+    return { saved: new Map(), budget: new Budget(DAILY_BUDGET, []), cooldowns: {}, lastRequestAt: 0, loadError: e.message };
   }
 }
 
 /**
- * @param state { saved: Map<key, row>, budget: Budget, cooldownUntil: ms, lastRequestAt: ms, loadError? }
- * @param deps  { db, fetchCell, now?, sleep?, log? }
+ * @param state { saved: Map<key, row>, budget: Budget, cooldowns: { [source]: ms }, lastRequestAt: ms, loadError? }
+ * @param deps  { db, fetchCell(center, source), now?, sleep?, log? }
+ *
+ * For each cell, sources are tried in order (adsb.lol, then adsb.fi), skipping any still cooling down
+ * from a 429. `ok` is false only if a cell got no answer from any source. `error` lists every problem,
+ * including ones a fallback recovered from (that's how later runs know a source refused us).
  * @returns { run }: the row written to `runs`
  */
 export async function runOnce(state, deps) {
   const { db, fetchCell, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log } = deps;
   const started = now();
-  const errors = [];
+  const errors = []; // cells that got no answer
+  const notes = []; // problems a fallback recovered from
+  const cooldowns = (state.cooldowns ??= {});
   const run = {
     started_at: iso(started),
     finished_at: null,
@@ -83,6 +95,7 @@ export async function runOnce(state, deps) {
     rows_changed: 0,
     resume_at: null,
     error: null,
+    source: null,
   };
 
   try {
@@ -93,10 +106,12 @@ export async function runOnce(state, deps) {
     const active = new Set(cells);
     run.cells = cells.length;
 
+    const coolingUntil = () => SOURCE_NAMES.map((name) => cooldowns[name] ?? 0);
     if (cells.length === 0) run.mode = "idle";
-    else if (started < state.cooldownUntil) {
+    else if (coolingUntil().every((until) => started < until)) {
+      // Every source refused us lately: wait for the first one to cool down.
       run.mode = "paused";
-      run.resume_at = iso(state.cooldownUntil);
+      run.resume_at = iso(Math.min(...coolingUntil()));
     } else {
       run.mode = state.budget.mode(started);
       if (run.mode === "paused") run.resume_at = iso(state.budget.resumeAt(started));
@@ -107,24 +122,32 @@ export async function runOnce(state, deps) {
     const slowWait = run.mode === "slow" && started - (state.lastRequestAt ?? 0) < SLOW_GAP_MS;
     if (run.mode === "normal" || (run.mode === "slow" && !slowWait)) {
       for (const [i, cell] of cells.entries()) {
+        if (now() - started > RUN_DEADLINE_MS) break; // the rest keep their planes until next run
         if (i > 0) await sleep(REQUEST_GAP_MS);
-        state.budget.record(now(), 1);
-        state.lastRequestAt = now();
-        run.requests += 1;
-        try {
-          const { aircraft, now: sourceNow } = await fetchCell(cellCenter(cell));
-          for (const ac of aircraft) {
-            const row = toSighting(ac, cell, sourceNow);
-            if (row) fresh.push(row);
-          }
-          fetched.add(cell);
-        } catch (e) {
-          errors.push(`${cell}: ${e.message}`);
-          if (e instanceof RateLimited) {
-            state.cooldownUntil = now() + COOLDOWN_MS;
+        let answered = false;
+        const problems = [];
+        for (const source of SOURCE_NAMES) {
+          if (now() < (cooldowns[source] ?? 0)) continue;
+          state.budget.record(now(), 1);
+          state.lastRequestAt = now();
+          run.requests += 1;
+          try {
+            const { aircraft, now: sourceNow } = await fetchCell(cellCenter(cell), source);
+            for (const ac of aircraft) {
+              const row = toSighting(ac, cell, sourceNow);
+              if (row) fresh.push(row);
+            }
+            fetched.add(cell);
+            run.source = source;
+            answered = true;
             break;
+          } catch (e) {
+            problems.push(`${cell}: ${e.message}`);
+            if (e instanceof RateLimited) cooldowns[source] = now() + COOLDOWN_MS;
           }
         }
+        if (answered) notes.push(...problems);
+        else errors.push(...(problems.length ? problems : [`${cell}: every source is cooling down`]));
       }
     }
 
@@ -144,7 +167,8 @@ export async function runOnce(state, deps) {
 
   run.requests_24h = state.budget.used(now());
   run.ok = errors.length === 0;
-  run.error = errors.length ? errors.join("; ") : null;
+  const problems = [...errors, ...notes];
+  run.error = problems.length ? problems.join("; ") : null;
   run.finished_at = iso(now());
   try {
     await db.insertRun(run);
@@ -153,7 +177,7 @@ export async function runOnce(state, deps) {
   }
 
   log(
-    `[run] ${run.started_at} ${run.ok ? "ok" : "FAILED"} mode=${run.mode} cells=${run.cells} requests=${run.requests} ` +
+    `[run] ${run.started_at} ${run.ok ? "ok" : "FAILED"} mode=${run.mode} cells=${run.cells} requests=${run.requests}${run.source ? ` source=${run.source}` : ""} ` +
       `(${run.requests_24h}/${run.daily_budget} in 24h) upserted=${run.upserted} deleted=${run.deleted}` +
       `${run.resume_at ? ` resume=${run.resume_at}` : ""}${run.error ? ` error="${run.error}"` : ""}`,
   );

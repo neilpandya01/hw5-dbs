@@ -12,7 +12,7 @@ How data moves from the flight source to your screen (with the chart, the daily 
 - **Clerk** for sign-in. Every page except `/sign-in` and `/sign-up` needs an account.
 - **Supabase** for the database and Realtime: `hunters`, `sightings`, `runs`, `catches`, with row-level security. Catches are only made by a database function that checks the rules.
 - **The worker** (`supabase/functions/worker/`, a Supabase Edge Function that Supabase Cron calls every 30 seconds): each run, for each grid cell with someone active in the last minute, it asks adsb.lol for the planes nearby and saves only what changed. It shares one budget of 500 requests a day across all players: under 75% used it fetches every 30 s, 75–90% every 60 s, and at 90% it pauses and the page says to come back later.
-- **Flight data:** [adsb.lol](https://adsb.lol) (free, no key; © adsb.lol contributors, ODbL). Airline names: OpenFlights (ODbL). Airline logos: pics.avs.io. Airports: [OurAirports](https://ourairports.com/data/) (public domain).
+- **Flight data:** [adsb.lol](https://adsb.lol) (free, no key; © adsb.lol contributors, ODbL), with [adsb.fi](https://adsb.fi) as a fallback when adsb.lol refuses (same format, free, no key). Airline names: OpenFlights (ODbL). Airline logos: pics.avs.io. Airports: [OurAirports](https://ourairports.com/data/) (public domain).
 - **Map:** Leaflet with Esri's grey Canvas map tiles (no key; © Esri, with OpenStreetMap data).
 - **Location:** only coordinates rounded to about 1 km are ever saved. "Near Chicago, Illinois" comes from BigDataCloud's free reverse-geocoding endpoint.
 
@@ -89,7 +89,8 @@ Import the repository on Vercel (Hobby plan), add the same variables as `.env.lo
 | The location step says "We found you, but couldn't save it" | Same as above, or no connection | Same as above |
 | "Flight data unavailable" | The worker isn't running (no run for 5 minutes), or its last run failed | Check **Integrations → Cron** (is `sky-hunt-worker` there and succeeding?), `select * from net._http_response order by created desc limit 5;` (a 401 means the Vault secret doesn't match `CRON_SECRET`), and the function's logs for `FAILED` lines |
 | The worker keeps logging `mode=idle` | Nobody has the Radar page open | Open the Radar page; it checks in every 25 seconds |
-| The worker's runs fail with `adsb.lol answered HTTP 403` | adsb.lol is refusing Supabase's servers | Check whether adsb.lol works from your own computer (`curl https://api.adsb.lol/v2/point/41.88/-87.63/5`); if it does, the block is on Supabase's network |
+| `runs.error` says `adsb.lol refused the request … (HTTP 429)` but `ok` is true and `source` is `adsb.fi` | adsb.lol limits per IP, and Supabase's Edge Functions share IPs with other projects | Nothing: the fallback answered, and adsb.lol is tried again after 5 minutes |
+| Runs are `paused` with `requests_24h` far under 450 | Both sources refused (HTTP 429) in the last 5 minutes | Wait; it resumes on its own at `resume_at` |
 | "Sky Hunt has used today's flight data limit" | 90% of adsb.lol's 500 requests per rolling 24 hours are used | Wait (it frees up gradually over 24 hours). |
 | The location step says location is blocked or unavailable | Browser permission, or the device's location is off | Follow the steps shown on the page |
 

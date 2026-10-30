@@ -41,8 +41,8 @@ function fakeDb({ hunters = [CHICAGO] } = {}) {
         .filter((r) => r.requests > 0 && r.started_at >= sinceIso)
         .map((r) => ({ at: Date.parse(r.started_at), requests: r.requests }));
     },
-    async lastRateLimitedAt(sinceIso) {
-      const hits = db.runs.filter((r) => r.started_at >= sinceIso && /HTTP 429/.test(r.error ?? ""));
+    async lastRateLimitedAt(source, sinceIso) {
+      const hits = db.runs.filter((r) => r.started_at >= sinceIso && (r.error ?? "").includes(`${source} refused`));
       return hits.length ? Date.parse(hits.at(-1).started_at) : null;
     },
   };
@@ -53,24 +53,29 @@ function setup({ response = fixture, hunters, budget = new Budget(500, []) } = {
   const db = fakeDb({ hunters });
   let clock = fixture.now;
   let calls = 0;
+  const asked = [];
+  // `current` is a response or an Error for every source, or a function of the source name.
   let current = response;
   const deps = {
     db,
-    fetchCell: async () => {
+    fetchCell: async (_center, source) => {
       calls += 1;
-      if (current instanceof Error) throw current;
-      return { aircraft: structuredClone(current.ac), now: clock };
+      asked.push(source);
+      const answer = typeof current === "function" ? current(source) : current;
+      if (answer instanceof Error) throw answer;
+      return { aircraft: structuredClone(answer.ac), now: clock };
     },
     now: () => clock,
     sleep: async () => {},
     log: () => {},
   };
-  const state = { saved: new Map(), budget, cooldownUntil: 0, lastRequestAt: 0 };
+  const state = { saved: new Map(), budget, cooldowns: {}, lastRequestAt: 0 };
   return {
     db,
     state,
     deps,
     calls: () => calls,
+    asked,
     advance: (ms) => (clock += ms),
     respond: (r) => (current = r),
   };
@@ -170,7 +175,7 @@ test("75-90% of the daily budget slows to every 60 s; 90%+ pauses with no reques
   assert.equal(b.run.ok, true);
 });
 
-test("a failed fetch is recorded as failed and keeps the saved planes", async () => {
+test("when every source fails, the run is recorded as failed and keeps the saved planes", async () => {
   const t = setup();
   await runOnce(t.state, t.deps);
   t.respond(new Error("adsb.lol answered HTTP 502"));
@@ -182,15 +187,51 @@ test("a failed fetch is recorded as failed and keeps the saved planes", async ()
   assert.equal(t.db.sightings.size, 44);
 });
 
-test("a 429 from adsb.lol pauses requests for a cooldown", async () => {
+test("adsb.lol answers first; nothing else is asked", async () => {
   const t = setup();
-  t.respond(new RateLimited());
+  const { run } = await runOnce(t.state, t.deps);
+  assert.deepEqual(t.asked, ["adsb.lol"]);
+  assert.equal(run.source, "adsb.lol");
+});
+
+test("a 429 from adsb.lol falls back to adsb.fi, and adsb.lol is skipped during its cooldown", async () => {
+  const t = setup();
+  t.respond((source) => (source === "adsb.lol" ? new RateLimited("adsb.lol") : fixture));
+  const first = await runOnce(t.state, t.deps);
+  assert.equal(first.run.ok, true); // the fallback answered
+  assert.equal(first.run.source, "adsb.fi");
+  assert.equal(first.run.requests, 2);
+  assert.equal(first.run.upserted, 44);
+  assert.match(first.run.error, /adsb.lol refused/); // remembered for the next runs
+  t.advance(30_000);
+  const second = await runOnce(t.state, t.deps);
+  assert.equal(second.run.mode, "normal");
+  assert.equal(second.run.requests, 1);
+  assert.deepEqual(t.asked, ["adsb.lol", "adsb.fi", "adsb.fi"]);
+});
+
+test("any other adsb.lol failure also falls back, without a cooldown", async () => {
+  const t = setup();
+  t.respond((source) => (source === "adsb.lol" ? new Error("adsb.lol answered HTTP 502") : fixture));
+  const { run } = await runOnce(t.state, t.deps);
+  assert.equal(run.ok, true);
+  assert.equal(run.source, "adsb.fi");
+  t.advance(30_000);
+  t.respond(fixture);
+  await runOnce(t.state, t.deps);
+  assert.equal(t.asked.at(-1), "adsb.lol");
+});
+
+test("when every source refuses, requests pause until the first cooldown ends", async () => {
+  const t = setup();
+  t.respond((source) => new RateLimited(source));
   const first = await runOnce(t.state, t.deps);
   assert.equal(first.run.ok, false);
   t.advance(30_000);
   const second = await runOnce(t.state, t.deps);
   assert.equal(second.run.mode, "paused");
-  assert.equal(t.calls(), 1);
+  assert.ok(second.run.resume_at);
+  assert.equal(t.calls(), 2); // one per source, in the first run only
 });
 
 // Like the Edge Function: every run starts from what the database says.
@@ -209,18 +250,26 @@ test("fresh state each run: an unchanged response writes nothing, and the reques
   assert.equal(second.run.requests_24h, 2);
 });
 
-test("fresh state each run: a 429 in an earlier run keeps requests paused for the cooldown", async () => {
+test("fresh state each run: a source that refused stays skipped for its cooldown, then is tried again", async () => {
   const t = setup();
-  t.respond(new RateLimited());
+  t.respond((source) => (source === "adsb.lol" ? new RateLimited("adsb.lol") : fixture));
   await freshRun(t);
   t.respond(fixture);
   t.advance(30_000);
-  const paused = await freshRun(t);
-  assert.equal(paused.run.mode, "paused");
-  assert.equal(t.calls(), 1);
+  const next = await freshRun(t);
+  assert.equal(next.run.source, "adsb.fi"); // adsb.lol still cooling, read back from `runs`
   t.advance(COOLDOWN_MS);
   const back = await freshRun(t);
-  assert.equal(back.run.mode, "normal");
+  assert.equal(back.run.source, "adsb.lol");
+});
+
+test("fresh state each run: when both refused, the next run is paused", async () => {
+  const t = setup();
+  t.respond((source) => new RateLimited(source));
+  await freshRun(t);
+  t.advance(30_000);
+  const paused = await freshRun(t);
+  assert.equal(paused.run.mode, "paused");
   assert.equal(t.calls(), 2);
 });
 
