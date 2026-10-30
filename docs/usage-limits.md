@@ -30,27 +30,27 @@ The worker meters itself. For every update it writes, it adds one message per pe
 
 | Used in the last 24 h (the larger of messages and bytes, as a share of a day's share) | Updates | Why this line |
 |---|---|---|
-| Under 50% | **Fast**: one zone every 2 s, taking turns (1 zone: every 2 s; 2 zones: every 4 s each; up to 8 zones) | Measured: about 9 MB per viewer-hour over Chicago (about 77 KB per 30-second call: 11 updates of about 19 changed planes each), so half a day's share (83 MB) covers about 9 viewer-hours of fast play a day |
-| 50% to 90% | **Every 30 s** for everyone (up to 4 zones) | Estimated at about 1.7 MB per viewer-hour (one update of most of the zone's planes every 30 s), about 1/5 of fast: roughly 40 more viewer-hours |
+| Under 50% | **Fast**: one zone every 2 s, taking turns (1 zone: every 2 s; 2 zones: every 4 s each; up to 8 zones, busiest first) | Measured: about 9 MB per viewer-hour over Chicago (about 77 KB per 30-second call: 11 updates of about 19 changed planes each), so half a day's share (83 MB) covers about 9 viewer-hours of fast play a day |
+| 50% to 90% | **Every 30 s** for everyone (up to 4 zones, busiest first) | Estimated at about 1.7 MB per viewer-hour (one update of most of the zone's planes every 30 s), about 1/5 of fast: roughly 40 more viewer-hours |
 | 90% or more | **Paused** for everyone ("Sky Hunt has reached today's flight data limit") | The last 10% is headroom for what the worker can't see: page loads, collections, reconnects |
 
-It's a rolling 24 hours, not a midnight reset, so it eases back gradually. The estimate is deliberately simple and errs high (it counts everyone active in a zone as watching).
+It's a rolling 24 hours, not a midnight reset, so it eases back gradually. The estimate is deliberately simple: it counts each person active in a zone (checked in during the last minute) as one viewer. It doesn't see page loads, a second tab, or a tab hidden for under a minute; the 10% headroom is for those. To check it against reality, compare with **Organization → Usage** in the Supabase dashboard.
 
 ### 2. Per person: 2 hours of Radar a day
 
 Without this, one person leaving the Radar open could spend the whole day's fast allowance. With it, a single player can use at most about 18 MB (2 hours at about 9 MB an hour), under a quarter of a day's fast allowance, so at least four people get fast updates each day and everyone can keep playing at the 30-second pace afterward.
 
-- `touch_hunter()` (the Radar's check-in every 25 s) adds the time since the last check-in (at most 30 s, and nothing after a gap of over a minute) to `hunters.play_seconds` for today (UTC).
+- `touch_hunter()` (the Radar's check-in every 25 s while it's open and visible) adds the time since the last check-in (at most 30 s, and nothing after a gap of over a minute) to `hunters.play_seconds` for today (UTC). So only time with the Radar in front of you counts.
 - At 2 hours it stops marking you active, so the worker stops fetching for you, and `catch_plane()` refuses with `PLAY_LIMIT`.
 - The Radar shows "X of Radar time left today", and at 0 says it's back at midnight UTC (with the time remaining). The map stops listening for updates. The Collection still works.
-- People can no longer write `last_active_at` or `play_seconds` themselves: the `hunters` table only lets the page write `onboarded`, `lat`, `lon`, and `location_at`.
+- People can't write `last_active_at` or `play_seconds` themselves: the `hunters` table only lets the page write `onboarded`, `lat`, `lon`, and `location_at`; activity and Radar time change only through `touch_hunter()` and `catch_plane()`.
 
 ### 3. Per source: request budgets
 
 | Source | Our cap | Why |
 |---|---|---|
-| adsb.fi | At most 1 request every 2 s in fast mode (half its 1/s limit), 1.1 s apart in a 30-second pass; **12,000 a day** | Stays under its per-second limit even with other Supabase projects sharing our IP; 12,000 is about 6.7 hours of one zone at full speed, and keeps us a light user (its terms ask heavy users to get permission) |
-| adsb.lol | **500 per rolling 24 h**: every 30 s under 75%, every 60 s from 75% to 90%, none from 90% | The number it once advertised; it's only the fallback now |
+| adsb.fi | At most 1 request every 2 s in fast mode (half its 1/s limit), at least 1.1 s apart in a 30-second pass; **12,000 a day** (then the pass uses adsb.lol) | Stays under its per-second limit even with other Supabase projects sharing our IP; 12,000 is about 6.7 hours of one zone at full speed, and keeps us a light user (its terms ask heavy users to get permission) |
+| adsb.lol | **500 per rolling 24 h**: every 30 s under 75%, every 60 s from 75% to 90%, none from 90% | The number it once advertised; it's only the fallback now. Only adsb.lol requests count toward it |
 | Either | A source that answers 429 is skipped for 5 minutes | adsb.fi bans IPs that keep getting errors; when both are refusing, updates pause |
 
 ### 4. Tabs nobody is looking at
@@ -62,9 +62,9 @@ The Radar stops checking in when its tab is hidden, so the worker stops fetching
 | Situation | On the Radar |
 |---|---|
 | Normal day | "Live · updated 2 s ago · 9 planes within 15 mi" |
-| Fast allowance used, or adsb.fi unavailable | "Live · updated 12 s ago · … · updating every 30 s right now" |
+| Fast allowance used, or adsb.fi refusing or at its daily cap | "Live · updated 12 s ago · … · updating every 30 s right now" |
 | adsb.lol's budget 75-90% (adsb.fi unavailable) | "… · updating less often to save today's limit" |
-| 90% of the day's share, or both sources refusing | Banner: "Sky Hunt has reached today's flight data limit." |
+| 90% of the day's share, both sources refusing, or adsb.fi unavailable with adsb.lol's budget 90% used | Banner: "Sky Hunt has reached today's flight data limit." (planes hidden) |
 | Your 2 hours are used | "You've used today's 2 hours of Radar … comes back at midnight UTC (in 3 h 12 min). Your collection is still open." |
 
 ## Checking usage

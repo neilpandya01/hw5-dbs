@@ -1,6 +1,7 @@
 // Sky Hunt's worker: a Supabase Edge Function. Supabase Cron calls it every 30 seconds
-// (supabase/migrations/20261029000000_worker_cron.sql); each call is one run: it fetches planes near
-// active players from adsb.lol, saves only what changed, and records the run in `runs`.
+// (supabase/migrations/20261029000000_worker_cron.sql). Each call is one run of about 20 seconds
+// (src/run.js): it fetches planes near active players (adsb.fi every 2 s, adsb.lol as the fallback),
+// saves only what changed, bundles each zone's changes into one `frames` row, and records the run in `runs`.
 //
 // Environment, all on Supabase's servers (never in code):
 //   SUPABASE_URL                                  provided by Supabase

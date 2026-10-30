@@ -6,7 +6,7 @@ import { FI_DAILY_CAP, MESSAGE_OVERHEAD_BYTES, paceFor, RUN_MESSAGE_BYTES } from
 import { RateLimited } from "./source.js";
 
 // One worker call. Supabase Cron calls the Edge Function every 30 seconds; each call starts from
-// nothing (`loadState` reads what earlier calls left in the database) and lasts about 22 seconds:
+// nothing (`loadState` reads what earlier calls left in the database) and lasts about 20 seconds:
 //
 //   1. Who's active? Hunters whose Radar checked in during the last minute, grouped into zones (grid cells).
 //   2. How fast may we go today? (limits.js: the free plan's daily share, metered by the worker itself)
