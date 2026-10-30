@@ -1,12 +1,15 @@
 import { REQUEST_RADIUS_NM } from "./cells.js";
 
-// The live sources: two free ADS-B networks (no key) that answer in the same format (readsb JSON).
-// One request returns every aircraft within a radius of a point.
-//   adsb.lol  first choice.  Data © adsb.lol contributors, Open Database License (ODbL).
-//   adsb.fi   fallback.      Data © adsb.fi, for non-commercial use.
-// Both limit requests per IP address. Supabase's Edge Functions share outgoing addresses with other
-// projects, so either can refuse us (HTTP 429) even when we've made few requests; then the run
-// tries the other one, and skips the refusing one for a cooldown.
+// The live sources: two free ADS-B networks (no key) that answer in the same format (readsb JSON:
+// `ac` is the list, `now` the response's clock in ms). One request returns every aircraft within a
+// radius of a point.
+//   adsb.fi   first choice: fast updates (one zone every 2 s) use only this one.
+//             Limit: 1 request per second per IP; repeated errors (incl. 429) earn a temporary IP ban.
+//             Personal, non-commercial use, with credit and a link. Data © adsb.fi.
+//   adsb.lol  fallback, at the old pace (every 30 s, up to 4 zones), within our own 500-a-day budget.
+//             Limit: "dynamic based on load", per IP. Data © adsb.lol contributors, ODbL.
+// Supabase's Edge Functions share outgoing IP addresses with other projects, so either can refuse us
+// (HTTP 429) even when we've made few requests. A source that refuses is skipped for 5 minutes.
 
 const lat = (c) => c.lat.toFixed(4);
 const lon = (c) => c.lon.toFixed(4);
@@ -14,14 +17,15 @@ const lon = (c) => c.lon.toFixed(4);
 /** In the order they're tried. */
 export const SOURCES = [
   {
+    name: "adsb.fi",
+    url: (c) => `https://opendata.adsb.fi/api/v3/lat/${lat(c)}/lon/${lon(c)}/dist/${REQUEST_RADIUS_NM}`,
+    // v3 answers like adsb.lol; the older v2 called the list `aircraft` (kept in case it comes back).
+    aircraft: (body) => body.ac ?? body.aircraft,
+  },
+  {
     name: "adsb.lol",
     url: (c) => `https://api.adsb.lol/v2/point/${lat(c)}/${lon(c)}/${REQUEST_RADIUS_NM}`,
     aircraft: (body) => body.ac,
-  },
-  {
-    name: "adsb.fi",
-    url: (c) => `https://opendata.adsb.fi/api/v2/lat/${lat(c)}/lon/${lon(c)}/dist/${REQUEST_RADIUS_NM}`,
-    aircraft: (body) => body.aircraft,
   },
 ];
 
@@ -34,7 +38,7 @@ export class RateLimited extends Error {
   }
 }
 
-/** The response's own clock in ms (adsb.lol sends ms, adsb.fi seconds), or ours if it has none. */
+/** The response's own clock in ms (sent in ms; adsb.fi's old v2 sent seconds), or ours if it has none. */
 function clockMs(now) {
   if (typeof now !== "number") return Date.now();
   return now < 1e11 ? Math.round(now * 1000) : now;
@@ -43,9 +47,9 @@ function clockMs(now) {
 /**
  * All aircraft within REQUEST_RADIUS_NM of a point, from one source.
  * Returns { aircraft, now } where `now` is the response's own clock in ms.
- * The timeout keeps a run (a few requests) under Cron's 30-second spacing, so runs don't overlap.
+ * The timeout keeps one slow answer from eating a whole fast-update window.
  */
-export async function fetchCell(center, sourceName = SOURCES[0].name, { fetchImpl = fetch, timeoutMs = 5_000 } = {}) {
+export async function fetchCell(center, sourceName = SOURCES[0].name, { fetchImpl = fetch, timeoutMs = 4_000 } = {}) {
   const source = SOURCES.find((s) => s.name === sourceName);
   if (!source) throw new Error(`unknown source ${sourceName}`);
   const res = await fetchImpl(source.url(center), {

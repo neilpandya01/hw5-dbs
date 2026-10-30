@@ -79,11 +79,14 @@ export function ago(ms: number, now: number): string {
  *   loading     nothing loaded yet
  *   down        the database can't be reached; the live connection has been lost for over 45 s;
  *               the worker hasn't run in 5 minutes; or its latest run failed
- *   limit       the shared daily budget is 90%+ used: updates paused until resumeAt
+ *   limit       updates are paused for everyone: today's free-plan share is used up, or every flight
+ *               source is refusing us (until resumeAt, when known)
  *   connecting  the live connection is (re)starting (under 45 s): what's shown may be a little behind
  *   starting    the worker's latest run had nobody active (you just arrived): looking for planes
  *   stale       no run for 3 intervals plus 15 s (105 s normally, 195 s in slow mode)
- *   fresh       otherwise ("slow" when the budget is 75-90% used and runs come every 60 s)
+ *   fresh       otherwise. `pace` says how often this zone updates: fast (every few seconds), normal
+ *               (every 30 s: today's fast allowance is used, or the fallback source is in use), slow (60 s).
+ *               "Updated" is this zone's latest update, or the latest run if that's newer.
  */
 export type Feed =
   | { status: "loading" }
@@ -92,7 +95,7 @@ export type Feed =
   | { status: "connecting" }
   | { status: "starting" }
   | { status: "stale"; updatedAt: number }
-  | { status: "fresh"; updatedAt: number; slow: boolean };
+  | { status: "fresh"; updatedAt: number; pace: "fast" | "normal" | "slow" };
 
 /** How long the live connection may be lost before the page says flight data is unavailable. */
 export const OFFLINE_DOWN_MS = 45_000;
@@ -100,7 +103,14 @@ export const OFFLINE_DOWN_MS = 45_000;
 export const WORKER_DOWN_MS = 5 * 60_000;
 
 export function feedState(
-  flights: { loaded: boolean; error: boolean; connection: Connection; offlineSince: number | null; run: Run | null },
+  flights: {
+    loaded: boolean;
+    error: boolean;
+    connection: Connection;
+    offlineSince: number | null;
+    run: Run | null;
+    frameAt?: number | null;
+  },
   now: number,
 ): Feed {
   const { loaded, error, connection, offlineSince, run } = flights;
@@ -115,5 +125,7 @@ export function feedState(
   if (run.mode === "idle") return { status: "starting" };
   const interval = run.mode === "slow" ? 60_000 : 30_000;
   if (now - run.finishedAt > 3 * interval + 15_000) return { status: "stale", updatedAt: run.finishedAt };
-  return { status: "fresh", updatedAt: run.finishedAt, slow: run.mode === "slow" };
+  const updatedAt = Math.max(run.finishedAt, flights.frameAt ?? 0);
+  const pace = run.mode === "fast" ? "fast" : run.mode === "slow" ? "slow" : "normal";
+  return { status: "fresh", updatedAt, pace };
 }

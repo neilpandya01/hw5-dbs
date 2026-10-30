@@ -5,10 +5,13 @@ import { useEffect, useState } from "react";
 import type { Rarity } from "./rarity";
 import { supabase } from "./supabase";
 
-// Live planes for one grid cell, kept current by Supabase Realtime:
-//   - load the cell's planes and the worker's latest run
-//   - then listen: new or moved planes (filtered to this cell), planes removed, and each new run
+// Live planes for one grid cell (zone), kept current by Supabase Realtime:
+//   - load the zone's planes (sightings) and the worker's latest run
+//   - then listen: each update of this zone (one `frames` row: the planes that changed and the ones
+//     that left, bundled so it's one Realtime message), and each new run
 // On (re)subscribing and on returning to the tab, it reloads, so nothing missed while away sticks.
+// A tab hidden for a minute lets go of its live connection (the worker has stopped updating it by then,
+// and every message to an unwatched tab still counts against the free plan); it reconnects on return.
 
 export type Kind = "commercial" | "private" | "unknown";
 
@@ -34,7 +37,7 @@ export type Sighting = {
   seenAt: number;
 };
 
-export type RunMode = "normal" | "slow" | "paused" | "idle";
+export type RunMode = "fast" | "normal" | "slow" | "paused" | "idle";
 
 export type Run = {
   finishedAt: number;
@@ -62,6 +65,13 @@ type SightingRow = {
   heading: number | null;
   airport: string | null;
   seen_at: string;
+};
+
+type FrameRow = {
+  cell: string;
+  at: string;
+  planes: SightingRow[];
+  removed: string[];
 };
 
 type RunRow = {
@@ -123,14 +133,26 @@ export type FlightsState = {
   offlineSince: number | null;
   planes: Sighting[];
   run: Run | null;
+  /** When this zone was last updated (its latest bundle), in ms; null until one arrives. */
+  frameAt: number | null;
 };
 
-const INITIAL: FlightsState = { loaded: false, error: false, connection: "connecting", offlineSince: null, planes: [], run: null };
+const INITIAL: FlightsState = {
+  loaded: false,
+  error: false,
+  connection: "connecting",
+  offlineSince: null,
+  planes: [],
+  run: null,
+  frameAt: null,
+};
 
 /** Reconnect this long after the live connection drops. */
 const RETRY_MS = 3_000;
-/** If nothing has arrived for this long (a run comes every 30-60 s), reload and reconnect. */
+/** If nothing has arrived for this long (a run comes every 30 s), reload and reconnect. */
 const QUIET_MS = 75_000;
+/** Let go of the live connection after the tab has been hidden this long. */
+const HIDDEN_DISCONNECT_MS = 60_000;
 
 export function useFlights(cell: string | null): FlightsState {
   const [state, setState] = useState<{ cell: string | null; flights: FlightsState }>({ cell, flights: INITIAL });
@@ -141,6 +163,8 @@ export function useFlights(cell: string | null): FlightsState {
     let cancelled = false;
     let channel: RealtimeChannel | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
+    let parked = false;
     let lastHeard = Date.now();
     let offlineSince: number | null = Date.now();
     const planes = new Map<string, Sighting>();
@@ -167,6 +191,15 @@ export function useFlights(cell: string | null): FlightsState {
       publish({ loaded: true, error: false, run: r.data ? toRun(r.data as RunRow) : null });
     }
 
+    function applyFrame(row: unknown) {
+      const frame = row as Partial<FrameRow>;
+      if (frame.cell !== cell) return;
+      heard();
+      for (const r of frame.planes ?? []) planes.set(r.hex, toSighting(r));
+      for (const hex of frame.removed ?? []) planes.delete(hex);
+      publish({ frameAt: frame.at ? Date.parse(frame.at) : Date.now() });
+    }
+
     function connect() {
       if (cancelled) return;
       // A fresh topic every time: the Realtime client hands back an existing channel with the same
@@ -175,23 +208,9 @@ export function useFlights(cell: string | null): FlightsState {
       const filter = `cell=eq.${cell}`;
       const ch: RealtimeChannel = sb!
         .channel(topic)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "sightings", filter }, (p) => {
-          heard();
-          const row = toSighting(p.new as SightingRow);
-          planes.set(row.hex, row);
-          publish({});
-        })
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "sightings", filter }, (p) => {
-          heard();
-          const row = toSighting(p.new as SightingRow);
-          planes.set(row.hex, row);
-          publish({});
-        })
-        // Deletes can't be filtered by Realtime; each carries the row's key (cell, hex), so check the cell here.
-        .on("postgres_changes", { event: "DELETE", schema: "public", table: "sightings" }, (p) => {
-          const old = p.old as Partial<SightingRow>;
-          if (old.cell === cell && old.hex && planes.delete(old.hex)) publish({});
-        })
+        // One message per zone update: the planes that changed, and the ones that left.
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "frames", filter }, (p) => applyFrame(p.new))
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "frames", filter }, (p) => applyFrame(p.new))
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "runs" }, (p) => {
           heard();
           publish({ run: toRun(p.new as RunRow) });
@@ -204,6 +223,7 @@ export function useFlights(cell: string | null): FlightsState {
             void load(); // catch up on anything missed while connecting
             return;
           }
+          if (parked) return; // we closed it on purpose (tab hidden)
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
             if (process.env.NODE_ENV !== "production") console.warn(`[realtime] ${status}`, err?.message ?? "");
             offlineSince ??= Date.now();
@@ -227,14 +247,33 @@ export function useFlights(cell: string | null): FlightsState {
     // Safety net: if the page has heard nothing for a while (no new run, no plane), reload what's saved
     // and reconnect. When everything works, this never fires: a run arrives every 30-60 seconds.
     const watchdog = setInterval(() => {
-      if (document.hidden || Date.now() - lastHeard < QUIET_MS) return;
+      if (document.hidden || parked || Date.now() - lastHeard < QUIET_MS) return;
       heard();
       void load();
       reconnectSoon();
     }, 15_000);
 
     const onVisible = () => {
-      if (!document.hidden) void load();
+      clearTimeout(hiddenTimer);
+      if (document.hidden) {
+        hiddenTimer = setTimeout(() => {
+          parked = true;
+          clearTimeout(retry);
+          const old = channel;
+          channel = null;
+          if (old) void sb!.removeChannel(old);
+        }, HIDDEN_DISCONNECT_MS);
+        return;
+      }
+      if (parked) {
+        parked = false;
+        offlineSince = Date.now();
+        heard();
+        publish({ connection: "connecting" });
+        connect(); // loads once subscribed
+      } else {
+        void load();
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     connect();
@@ -242,6 +281,7 @@ export function useFlights(cell: string | null): FlightsState {
     return () => {
       cancelled = true;
       clearTimeout(retry);
+      clearTimeout(hiddenTimer);
       clearInterval(watchdog);
       document.removeEventListener("visibilitychange", onVisible);
       if (channel) void sb.removeChannel(channel);

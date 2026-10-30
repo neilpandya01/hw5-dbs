@@ -51,28 +51,23 @@ export function createDb(url: string, secretKey: string) {
       check(await sb.from("runs").insert(run), "recording the run");
     },
 
-    /** [{ at: ms, requests }] for runs since `sinceIso` that made requests. */
-    async requestHistory(sinceIso: string) {
-      const rows = check(
-        await sb.from("runs").select("started_at, requests").gte("started_at", sinceIso).gt("requests", 0),
-        "reading request history",
-      ) ?? [];
-      return rows.map((r) => ({ at: Date.parse(r.started_at), requests: r.requests }));
+    /** One zone's update: the planes that changed, in one row (one Realtime message per viewer). */
+    async writeFrame(frame: { cell: string; seq: number; at: string; planes: Row[]; removed: string[] }) {
+      check(await sb.from("frames").upsert(frame, { onConflict: "cell" }), "writing the zone's update");
     },
 
-    /** When `source` last refused a request (HTTP 429) since `sinceIso`, in ms, or null. */
-    async lastRateLimitedAt(source: string, sinceIso: string) {
-      const rows = check(
-        await sb
-          .from("runs")
-          .select("started_at")
-          .gte("started_at", sinceIso)
-          .like("error", `%${source} refused%`)
-          .order("started_at", { ascending: false })
-          .limit(1),
-        "reading the last rate limit",
-      ) ?? [];
-      return rows.length ? Date.parse(rows[0].started_at) : null;
+    /** The last 24 hours of usage, summed in the database (worker_usage() in the migrations). */
+    async usage() {
+      const data = check(await sb.rpc("worker_usage"), "reading usage") as Record<string, unknown> | null;
+      return (data ?? {}) as {
+        lol_24h?: number;
+        fi_24h?: number;
+        messages_24h?: number;
+        bytes_24h?: number;
+        lol_limited_at?: string | null;
+        fi_limited_at?: string | null;
+        lol_events?: [number, number][];
+      };
     },
   };
 }

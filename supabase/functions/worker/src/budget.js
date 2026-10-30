@@ -1,10 +1,12 @@
-// The shared daily request budget for adsb.lol. One worker serves every player, so this is app-wide.
+// adsb.lol's daily request budget: ours, app-wide (one worker serves every player). adsb.lol is the
+// fallback source, used at the old pace when adsb.fi is unavailable (see run.js).
 //
-// adsb.lol allows 500 requests per rolling 24 hours (its x-ratelimit-limit header: "500;w=86400").
-//   under 75% used  → normal: requests every run (Cron runs the worker every 30 seconds)
-//   75% to 90%      → slow:   requests every other run (every 60 seconds)
-//   90% or more     → paused: no requests until enough of the last 24 hours' requests age out
-// The worker counts its own requests: each run reads the last 24 hours of them back from `runs`.
+// adsb.lol publishes no fixed limit ("dynamic based on load"); 500 per rolling 24 hours is what it
+// once advertised, and we keep it as our own cap:
+//   under 75% used  → normal: requests every call (every 30 seconds)
+//   75% to 90%      → slow:   every other call (every 60 seconds)
+//   90% or more     → paused: no adsb.lol requests until enough of the last 24 hours' age out
+// Each call reads the last 24 hours of adsb.lol requests back from `runs` (worker_usage()).
 
 export const DAILY_BUDGET = 500;
 export const SLOW_AT = 0.75;

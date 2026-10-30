@@ -8,42 +8,44 @@ The first version of this chart was committed before any code (commit `0eb87b7`)
 
 ```mermaid
 flowchart TD
-  SRC["adsb.lol (adsb.fi as fallback)<br/>free, no key, 500 requests/day"]
+  SRC["adsb.fi (adsb.lol as fallback)<br/>free, no key"]
   CRON["Supabase Cron<br/>every 30 s"]
   W["Worker: Supabase Edge Function<br/>one run per call"]
-  DB["Supabase<br/>hunters · sightings · runs · catches"]
+  DB["Supabase<br/>hunters · sightings · frames · runs · catches"]
   PAGE["Next.js page on Vercel"]
   CLERK["Clerk sign-in"]
 
   PAGE -- "rounded location (when moved 2 km) + 'still here' every 25 s" --> DB
   CRON -- "POST with x-cron-secret" --> W
   DB -- "who's active, saved planes, last 24 h of requests" --> W
-  W -- "1 request per active grid cell, every 30 s" --> SRC
+  W -- "fast: one zone every 2 s (taking turns)<br/>or every 30 s, up to 4 zones" --> SRC
   SRC -- "every aircraft within 25 nm" --> W
-  W -- "upsert planes that moved, delete planes that left, log the run" --> DB
-  DB -- "Realtime: changed planes in my cell + each new run" --> PAGE
+  W -- "save planes that changed + one bundle per zone update, log the run + usage" --> DB
+  DB -- "Realtime: my zone's bundles + each new run" --> PAGE
   CLERK --> PAGE
   PAGE -- "catch_plane(): the database checks the rules" --> DB
 ```
 
-1. **Page → Supabase.** While the radar is open, it marks you active every 25 seconds (`touch_hunter()`), and saves your location rounded to about 1 km when you've moved about 2 km. Your exact position never leaves the browser.
+1. **Page → Supabase.** While the radar is open, it marks you active every 25 seconds (`touch_hunter()`, which also counts your 2 hours of Radar a day), and saves your location rounded to about 1 km when you've moved about 2 km. Your exact position never leaves the browser.
 2. **Cron → worker → Supabase.** Every 30 seconds, Supabase Cron calls the worker (an Edge Function). A call remembers nothing from the last one, so it first reads back what earlier runs left: the saved planes, the requests made in the last 24 hours, and whether adsb.lol refused one recently. Then it reads who was active in the last minute and groups them into **grid cells** (0.25°, about 17 × 13 miles in Chicago). Nobody active means no requests at all.
-3. **Worker → adsb.lol.** One request per active cell (at most 4 per run, busiest first): every aircraft within 25 nautical miles of the cell's center, which covers the whole cell plus the 15 miles the page shows.
-4. **Worker → Supabase.** Each aircraft becomes a `sightings` row: commercial, private, or unknown; airline and logo code; aircraft type and rarity; position, altitude, direction; whether it's over an airport's no-catch zone; and when it was pinged. Only planes that are new, moved a quarter mile, changed altitude by 300 ft, turned 10°, or haven't been saved for a minute are upserted. Planes that left are deleted. Each run adds a row to `runs`.
-5. **Supabase → page.** Realtime pushes each changed plane in your cell, and each new run, to your open page. The page shows the closest planes and how fresh the data is.
+3. **Worker → flight source.** Each call lasts about 22 seconds. Normally it's **fast**: every 2 seconds it asks adsb.fi for the next active zone in turn (so with one zone, it's updated every 2 s; with two, each every 4 s). Once the day's fast allowance is used (see below), or if adsb.fi refuses, it does the old **30-second pass** instead: up to 4 zones, busiest first, adsb.fi or else adsb.lol. Each request returns every aircraft within 25 nautical miles of the zone's center, which covers the whole zone plus the 15 miles the page shows.
+4. **Worker → Supabase.** Each aircraft becomes a `sightings` row: commercial, private, or unknown; airline and logo code; aircraft type and rarity; position, altitude, direction; whether it's over an airport's no-catch zone; and when it was pinged. Only planes that are new, moved a quarter mile, changed altitude by 300 ft, turned 10°, or haven't been saved for a minute are upserted. Planes that left are deleted. The same changes go into **one `frames` row** for the zone (the changed planes and the ones that left), so Realtime sends one message per update instead of one per plane. Each call adds a row to `runs`, with an estimate of the messages and bytes it caused.
+5. **Supabase → page.** Realtime pushes each update of your zone (one message), and each new run, to your open page. The page applies the bundle, shows the closest planes, and says how fresh the data is. A tab hidden for a minute lets go of its connection.
 6. **Catching.** `catch_plane()` checks the plane's latest ping: commercial, under 90 seconds old, within 5 miles of you (plus half a mile for rounding), not over an airport. Then it adds the catch. The page can't add catches itself.
 
-## The shared daily budget
+## Daily limits
 
-adsb.lol allows **500 requests per rolling 24 hours** (its `x-ratelimit-limit` header). One worker serves everyone, so the budget is app-wide:
+Everything is on free plans, so the app limits itself per day: the reasons and numbers are in [usage-limits.md](usage-limits.md). In short:
 
-| Used in the last 24 h | Worker | Page |
-|---|---|---|
-| Under 75% (375) | Requests every run (30 s) | "Live · updated 12 s ago" |
-| 75% to 90% | Requests every other run (60 s); the runs in between are recorded but skip the request | "Live · updated … · updating less often to save today's limit" |
-| 90% or more (450) | No requests until enough age out (the worker records an estimated `resume_at`) | "Sky Hunt has used today's flight data limit. Come back later." |
+| Limit | What happens |
+|---|---|
+| Under 50% of a day's share of Supabase's free Realtime messages and egress (the worker's own estimate, over 24 h) | Fast: one zone every 2 s |
+| 50% to 90% | Every 30 s for everyone |
+| 90% or more | Paused for everyone: "Sky Hunt has reached today's flight data limit." |
+| You've used 2 hours of Radar today | The Radar stops for you until midnight UTC; the Collection still works |
+| adsb.fi refuses (HTTP 429), or 12,000 requests today | adsb.lol at the old pace: every 30 s, every 60 s at 75% of its 500-a-day budget, none at 90% |
 
-A refused request (HTTP 429) makes the worker skip that source for 5 minutes and ask adsb.fi instead (same data format). Both limit requests per IP address, and Supabase's Edge Functions share outgoing addresses with other projects, so adsb.lol can refuse even when Sky Hunt has used little; only when both sources are refusing does the worker pause. The worker counts its own requests from `runs` at the start of every call, so nothing is lost between calls. Cron calls about 86,000 times a month, well under the free plan's 500,000 Edge Function calls.
+A source that refuses is skipped for 5 minutes. Both limit per IP address, and Supabase's Edge Functions share outgoing addresses with other projects, so either can refuse even when Sky Hunt has used little.
 
 ## Freshness states on the page
 
@@ -55,7 +57,7 @@ From the latest row in `runs` and the page's own live (Realtime) connection, che
 - **Connecting:** the live connection is starting or reconnecting (under 45 seconds): "Connecting to live updates…", or "Reconnecting… showing the last positions" when planes are on the map.
 - **Starting:** the latest run had nobody active (you just arrived): "Looking for planes near you…".
 - **Stale:** no run for 3 intervals plus 15 seconds (105 s normally): "No update for 2 min · these positions may be out of date" when planes are still shown, or "No new flight data for 3 min, so there are no recent planes to show" once they've aged off (after 2 minutes). Old positions aren't catchable.
-- **Fresh:** "Live · updated 12 s ago · 8 planes within 15 mi" (or "no planes within 15 mi right now").
+- **Fresh:** "Live · updated 2 s ago · 8 planes within 15 mi" (or "no planes within 15 mi right now"), plus "updating every 30 s right now" or "updating less often to save today's limit" when it isn't fast. "Updated" is your zone's latest update.
 
 The status line is the only message about flight data on the Radar page; down and the daily limit replace it with one banner.
 
@@ -66,8 +68,9 @@ The page reconnects on its own when the live connection drops (after 3 seconds),
 | Table | Written by | Who can read | Realtime |
 |---|---|---|---|
 | `hunters` | Each person (own row) | Only the owner | No |
-| `sightings` | Worker (secret key, on Supabase's servers) | Signed-in people | Yes |
-| `runs` | Worker | Signed-in people | Yes (inserts) |
+| `sightings` | Worker (secret key, on Supabase's servers) | Signed-in people | No (the page loads it; catching checks it) |
+| `frames` | Worker | Signed-in people | Yes: one message per zone update |
+| `runs` | Worker | Signed-in people | Yes (inserts), one per call |
 | `catches` | `catch_plane()` only | Only the owner | No |
 
 The full schema and row-level security policies are in `supabase/migrations/`.

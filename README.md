@@ -2,7 +2,7 @@
 
 A plane-spotting game built on live flight data. A map shows the real planes flying near you; catch a commercial flight while its latest position is inside your 5-mile circle, and collect every airline and aircraft type. Planes over an airport's grey zone don't count. Rare aircraft, like a 747 or an A380, are worth more.
 
-Built for Assignment 5 (Live Data System) of Design, Build, Ship: a worker that Supabase Cron runs every 30 seconds fetches live flight positions, saves only what changed to Supabase, and Supabase Realtime updates the page without a refresh.
+Built for Assignment 5 (Live Data System) of Design, Build, Ship: a worker that Supabase Cron runs every 30 seconds fetches live flight positions (every 2 seconds while it runs), saves only what changed to Supabase, and Supabase Realtime updates the page without a refresh. It all fits in free plans, with daily limits explained in [docs/usage-limits.md](docs/usage-limits.md).
 
 ## How it works
 
@@ -10,9 +10,10 @@ How data moves from the flight source to your screen (with the chart, the daily 
 
 - **Next.js 16 and Tailwind CSS 4**, deployed on Vercel.
 - **Clerk** for sign-in. Every page except `/sign-in` and `/sign-up` needs an account.
-- **Supabase** for the database and Realtime: `hunters`, `sightings`, `runs`, `catches`, with row-level security. Catches are only made by a database function that checks the rules.
-- **The worker** (`supabase/functions/worker/`, a Supabase Edge Function that Supabase Cron calls every 30 seconds): each run, for each grid cell with someone active in the last minute, it asks adsb.lol for the planes nearby and saves only what changed. It shares one budget of 500 requests a day across all players: under 75% used it fetches every 30 s, 75–90% every 60 s, and at 90% it pauses and the page says to come back later.
-- **Flight data:** [adsb.lol](https://adsb.lol) (free, no key; © adsb.lol contributors, ODbL), with [adsb.fi](https://adsb.fi) as a fallback when adsb.lol refuses (same format, free, no key). Airline names: OpenFlights (ODbL). Airline logos: pics.avs.io. Airports: [OurAirports](https://ourairports.com/data/) (public domain).
+- **Supabase** for the database and Realtime: `hunters`, `sightings`, `frames` (one bundle per zone update), `runs`, `catches`, with row-level security. Catches are only made by a database function that checks the rules.
+- **The worker** (`supabase/functions/worker/`, a Supabase Edge Function that Supabase Cron calls every 30 seconds): each call runs about 22 seconds and, every 2 seconds, fetches the next zone (grid cell) with someone active from adsb.fi, saves only the planes that changed, and writes them as one bundle so Realtime sends one message per update. With one zone, it's updated every 2 s; with two, each every 4 s. When the day's fast allowance is used, or adsb.fi refuses, it goes back to every 30 s (adsb.lol as the fallback, within its own 500-a-day budget).
+- **Daily limits** ([docs/usage-limits.md](docs/usage-limits.md)): the app keeps each day to a thirtieth of Supabase's free monthly Realtime messages and egress (fast updates under 50% of that, 30-second updates to 90%, paused beyond), and each person gets 2 hours of Radar a day.
+- **Flight data:** [adsb.fi](https://adsb.fi) (free, no key, personal non-commercial use, credited on the Radar), with [adsb.lol](https://adsb.lol) as the fallback (free, no key; © adsb.lol contributors, ODbL). Same format. Airline names: OpenFlights (ODbL). Airline logos: pics.avs.io. Airports: [OurAirports](https://ourairports.com/data/) (public domain).
 - **Map:** Leaflet with Esri's grey Canvas map tiles (no key; © Esri, with OpenStreetMap data).
 - **Location:** only coordinates rounded to about 1 km are ever saved. "Near Chicago, Illinois" comes from BigDataCloud's free reverse-geocoding endpoint.
 
@@ -58,7 +59,7 @@ The worker is the Edge Function in [`supabase/functions/worker/`](supabase/funct
    npx supabase link --project-ref <project-ref>
    npx supabase functions deploy worker --no-verify-jwt
    ```
-4. **Call it once by hand** and read the answer (one `runs` row as JSON; `"ok": true`):
+4. **Call it once by hand** and read the answer (one `runs` row as JSON; `"ok": true`; with someone on the Radar, it takes about 22 seconds):
    ```bash
    curl -X POST https://<project-ref>.supabase.co/functions/v1/worker -H "x-cron-secret: <the string>"
    ```
@@ -68,7 +69,7 @@ The worker is the Edge Function in [`supabase/functions/worker/`](supabase/funct
    select vault.create_secret('https://<project-ref>.supabase.co/functions/v1/worker', 'sky_hunt_worker_url');
    select vault.create_secret('<the string>', 'sky_hunt_cron_secret');
    ```
-6. **Schedule it:** run [`supabase/migrations/20261029000000_worker_cron.sql`](supabase/migrations/20261029000000_worker_cron.sql) in the SQL Editor (or through the MCP). It turns on `pg_cron` and `pg_net` and calls the worker every 30 seconds.
+6. **Schedule it:** run [`supabase/migrations/20261029000000_worker_cron.sql`](supabase/migrations/20261029000000_worker_cron.sql) in the SQL Editor (or through the MCP). It turns on `pg_cron` and `pg_net` and calls the worker every 30 seconds. Then run the later migrations in order: [`20261030000000_runs_source.sql`](supabase/migrations/20261030000000_runs_source.sql) and [`20261030010000_fast_updates_and_limits.sql`](supabase/migrations/20261030010000_fast_updates_and_limits.sql) (fast updates, bundles, daily limits).
 7. **Check it:** **Integrations → Cron** shows `sky-hunt-worker` succeeding every 30 s; `select * from runs order by started_at desc limit 5;` shows a new row every 30 s; **Edge Functions → worker → Logs** shows one `[run]` line per call.
 
 To stop the worker: `select cron.unschedule('sky-hunt-worker');` (re-run the migration to start it again).
@@ -77,9 +78,17 @@ To stop the worker: `select cron.unschedule('sky-hunt-worker');` (re-run the mig
 Import the repository on Vercel (Hobby plan), add the same variables as `.env.local`, and deploy. Never add the Supabase **secret** key to Vercel; only the worker has it, on Supabase.
 
 ### Free tiers
-- **Supabase:** Cron calls the worker about 86,000 times a month (the free plan includes 500,000). Realtime only sends rows that changed. A free project pauses after a week unused, so open the app now and then until grades are back. Check **Organization → Usage**.
+Sky Hunt limits itself to stay inside the free plans every day; the numbers and the reasoning are in [docs/usage-limits.md](docs/usage-limits.md). To see where today stands:
+
+```sql
+select started_at, mode, ticks, fi_requests_24h, requests_24h as lol_requests_24h,
+       messages_24h, round(bytes_24h / 1e6, 1) as mb_24h
+from runs order by started_at desc limit 1;
+```
+
+- **Supabase:** Cron calls the worker 86,400 times a month (500,000 free). Realtime messages (2 million a month) and egress (5 GB) are what fast updates use; the worker keeps each day to a thirtieth of them. A free project pauses after a week unused, so open the app now and then until grades are back. Check **Organization → Usage**.
 - **Vercel:** Hobby plan, no payment method. **Clerk:** free plan.
-- **adsb.lol:** 500 requests a day for the whole app; the worker slows down and then pauses on its own.
+- **adsb.fi:** 1 request per second (we use at most one every 2 s, and 12,000 a day). **adsb.lol:** our own 500 a day, as the fallback.
 
 ## Troubleshooting
 
@@ -89,8 +98,10 @@ Import the repository on Vercel (Hobby plan), add the same variables as `.env.lo
 | The location step says "We found you, but couldn't save it" | Same as above, or no connection | Same as above |
 | "Flight data unavailable" | The worker isn't running (no run for 5 minutes), or its last run failed | Check **Integrations → Cron** (is `sky-hunt-worker` there and succeeding?), `select * from net._http_response order by created desc limit 5;` (a 401 means the Vault secret doesn't match `CRON_SECRET`), and the function's logs for `FAILED` lines |
 | The worker keeps logging `mode=idle` | Nobody has the Radar page open | Open the Radar page; it checks in every 25 seconds |
-| `runs.error` says `adsb.lol refused the request … (HTTP 429)` but `ok` is true and `source` is `adsb.fi` | adsb.lol limits per IP, and Supabase's Edge Functions share IPs with other projects | Nothing: the fallback answered, and adsb.lol is tried again after 5 minutes |
-| Runs are `paused` with `requests_24h` far under 450 | Both sources refused (HTTP 429) in the last 5 minutes | Wait; it resumes on its own at `resume_at` |
+| `runs.error` says `adsb.fi refused the request … (HTTP 429)` but `ok` is true and `source` is `adsb.lol` | Both sources limit per IP, and Supabase's Edge Functions share IPs with other projects | Nothing: the fallback answered, and adsb.fi is tried again after 5 minutes |
+| Runs are `paused` with `requests_24h` far under 450 | Both sources refused (HTTP 429) in the last 5 minutes, or `messages_24h`/`bytes_24h` reached 90% of a day's share | Wait; it resumes on its own (`resume_at` when known). See [docs/usage-limits.md](docs/usage-limits.md) |
+| "updating every 30 s right now" | The day's fast allowance (50% of a day's share) is used, or adsb.fi is refusing | Nothing; it goes back to every 2 s as usage ages out over 24 hours |
+| "You've used today's 2 hours of Radar" | Each person gets 2 hours a day | It comes back at midnight UTC |
 | "Sky Hunt has used today's flight data limit" | 90% of adsb.lol's 500 requests per rolling 24 hours are used | Wait (it frees up gradually over 24 hours). |
 | The location step says location is blocked or unavailable | Browser permission, or the device's location is off | Follow the steps shown on the page |
 
@@ -102,4 +113,4 @@ While developing, the account banner also shows the technical reason (never on t
 npm run test:worker
 ```
 
-The worker's tests run it on a saved adsb.lol response ([`supabase/functions/worker/test/fixtures/chicago.json`](supabase/functions/worker/test/fixtures/chicago.json)) with an in-memory stand-in for Supabase. They check what it saves (44 planes in the air, the 9 on the ground skipped), that an unchanged response writes nothing, that only a plane that moved is saved again, that planes that leave are deleted, that every run is recorded, the budget modes (30 s, 60 s, paused), what happens when adsb.lol fails or refuses, and that runs which rebuild their state from the database each time (as each Cron call does) behave the same.
+The worker's tests run it on a saved response ([`supabase/functions/worker/test/fixtures/chicago.json`](supabase/functions/worker/test/fixtures/chicago.json)) with an in-memory stand-in for Supabase and a fake clock. They check fast updates (one zone every 2 s, zones taking turns), that only changed planes are saved and bundled into one update, that planes that leave are removed, the usage estimate (one message per person watching), the daily limits (30-second updates past 50%, paused past 90%), the 4-zone pass, adsb.fi failing over to adsb.lol, adsb.lol's budget (slow, paused), both sources refusing, calls that rebuild their state from the database (as each Cron call does), and both sources' response formats.

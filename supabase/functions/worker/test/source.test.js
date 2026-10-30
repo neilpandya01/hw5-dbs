@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fetchCell, RateLimited } from "../src/source.js";
 
-// The two sources answer in the same format with two differences: adsb.lol calls the list `ac` and
-// sends its clock in ms; adsb.fi calls it `aircraft` and sends seconds.
+// Both sources answer in the same format: `ac` is the list, `now` the clock in ms. (adsb.fi's older
+// v2 endpoint called the list `aircraft` and sent seconds; that's still understood.)
 
 const CHICAGO = { lat: 41.875, lon: -87.625 };
 const plane = { hex: "aa2b21", flight: "RPA3416 ", t: "E75L", lat: 41.9, lon: -87.7, alt_baro: 35000 };
@@ -20,10 +20,16 @@ test("adsb.lol: reads `ac` and a clock in ms", async () => {
   assert.equal(r.now, 1793318994002);
 });
 
-test("adsb.fi: reads `aircraft` and turns its clock in seconds into ms", async () => {
-  const r = await fetchCell(CHICAGO, "adsb.fi", { fetchImpl: answer(200, { aircraft: [plane], now: 1793318994.002 }) });
-  assert.equal(answer.lastUrl, "https://opendata.adsb.fi/api/v2/lat/41.8750/lon/-87.6250/dist/25");
+test("adsb.fi v3: same format as adsb.lol (`ac`, clock in ms)", async () => {
+  const r = await fetchCell(CHICAGO, "adsb.fi", { fetchImpl: answer(200, { ac: [plane], now: 1793318994002 }) });
+  assert.equal(answer.lastUrl, "https://opendata.adsb.fi/api/v3/lat/41.8750/lon/-87.6250/dist/25");
   assert.equal(r.aircraft[0].hex, "aa2b21");
+  assert.equal(r.now, 1793318994002);
+});
+
+test("the older adsb.fi format (`aircraft`, clock in seconds) still reads correctly", async () => {
+  const r = await fetchCell(CHICAGO, "adsb.fi", { fetchImpl: answer(200, { aircraft: [plane], now: 1793318994.002 }) });
+  assert.equal(r.aircraft.length, 1);
   assert.equal(r.now, 1793318994002);
 });
 

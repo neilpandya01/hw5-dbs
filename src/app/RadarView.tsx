@@ -12,7 +12,7 @@ import { noCatchZoneAt, shortName, useAirports } from "@/lib/airports";
 import { cellOf } from "@/lib/cells";
 import { useFlights, useNow } from "@/lib/flights";
 import { CATCH_RANGE_MI } from "@/lib/geo";
-import { useHeartbeat } from "@/lib/heartbeat";
+import { PLAY_LIMIT_S, useHeartbeat } from "@/lib/heartbeat";
 import { useLiveLocation } from "@/lib/location";
 import { useNearestPlace } from "@/lib/nearestPlace";
 import { ago, catchBlock, catchShort, feedState, nearbyPlanes, planeTitle, planeType, type NearbyPlane } from "@/lib/nearby";
@@ -27,6 +27,7 @@ const CATCH_ERRORS: Record<CatchError, string> = {
   ALREADY_CAUGHT: "You already caught this plane today.",
   GONE: "It flew out of the area before you caught it.",
   NO_LOCATION: "We need your location to catch planes.",
+  PLAY_LIMIT: "You've used today's Radar time. Catching opens again after midnight UTC.",
   FAILED: "That didn't go through. Check your connection and try again.",
 };
 
@@ -34,6 +35,8 @@ const CATCH_ERRORS: Record<CatchError, string> = {
  * The home screen: a live map centered on you, your 5-mile catch circle, airport zones, and the
  * planes near you (at most 12 inside your circle and 15 outside it, out to 15 miles, closest first).
  * While it's open, it tells the worker you're active (every 25 s), and Realtime brings each update.
+ * Each person gets 2 hours of Radar a day (UTC), so the free plan stretches to everyone
+ * (docs/usage-limits.md); after that the Radar stops listening and says when it's back.
  */
 export function RadarView() {
   const store = useStore();
@@ -47,8 +50,10 @@ export function RadarView() {
   const now = useNow(1000);
   // The worker files planes by the cell of your saved (rounded) location; listen to that cell.
   const cell = saved ? cellOf(saved.lat, saved.lon) : null;
-  const flights = useFlights(cell);
-  useHeartbeat(!!store && !!saved && store.storage !== "load-failed");
+  const timeLeft = useHeartbeat(!!store && !!saved && store.storage !== "load-failed");
+  const outOfTime = timeLeft === 0;
+  // Out of Radar time: stop listening for updates (the worker has stopped fetching for you, too).
+  const flights = useFlights(outOfTime ? null : cell);
 
   const [selected, setSelected] = useState<string | null>(null);
   // Catching, per plane: which one is being caught, and how each attempt went (shown on its row and card).
@@ -90,7 +95,9 @@ export function RadarView() {
   const atAirport = me ? noCatchZoneAt(airports, me) : null;
   const feed = feedState(flights, now);
   // Planes show whenever there is data to show; positions older than 2 minutes are hidden either way.
-  const showPlanes = feed.status === "fresh" || feed.status === "stale" || feed.status === "connecting" || feed.status === "starting";
+  const showPlanes =
+    !outOfTime &&
+    (feed.status === "fresh" || feed.status === "stale" || feed.status === "connecting" || feed.status === "starting");
   const { inRange, outside } = me && showPlanes ? nearbyPlanes(flights.planes, me, now) : { inRange: [], outside: [] };
   const today = new Date(now).toISOString().slice(0, 10);
   const caughtToday = new Set(store.data.catches.filter((c) => c.caughtAt.slice(0, 10) === today).map((c) => c.hex));
@@ -177,8 +184,17 @@ export function RadarView() {
       )}
 
       <div className="flex flex-col gap-2">
-        <FeedStatus feed={feed} now={now} shown={shown.length} />
-        <FeedProblem feed={feed} />
+        {outOfTime ? (
+          <PlayLimitReached now={now} />
+        ) : (
+          <>
+            <FeedStatus feed={feed} now={now} shown={shown.length} />
+            <FeedProblem feed={feed} />
+            {timeLeft !== null && timeLeft < PLAY_LIMIT_S && (
+              <p className="text-sm text-muted">{duration(timeLeft)} of Radar time left today</p>
+            )}
+          </>
+        )}
       </div>
 
       <div ref={mapBox} className="flex scroll-mt-24 flex-col gap-2">
@@ -236,6 +252,42 @@ export function RadarView() {
           )}
         </>
       )}
+
+      <p className="text-xs text-muted">
+        Flight data from{" "}
+        <a className="underline" href="https://adsb.fi" target="_blank" rel="noreferrer">
+          adsb.fi
+        </a>{" "}
+        and{" "}
+        <a className="underline" href="https://adsb.lol" target="_blank" rel="noreferrer">
+          adsb.lol
+        </a>{" "}
+        (ODbL).
+      </p>
+    </div>
+  );
+}
+
+/** "1 h 5 min", "12 min", "less than a minute". */
+function duration(seconds: number): string {
+  const min = Math.floor(seconds / 60);
+  if (min < 1) return "Less than a minute";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h > 0 ? `${h} h${m ? ` ${m} min` : ""}` : `${m} min`;
+}
+
+/** Today's 2 hours of Radar are used up: say why, and when it comes back. */
+function PlayLimitReached({ now }: { now: number }) {
+  const midnight = now ? Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate() + 1) : 0;
+  const back = now ? duration(Math.max(60, (midnight - now) / 1000)).toLowerCase() : "";
+  return (
+    <div role="status" className="flex flex-col gap-1 rounded-xl border border-line bg-surface px-4 py-3 text-sm">
+      <p className="font-medium text-ink">You&apos;ve used today&apos;s {PLAY_LIMIT_S / 3600} hours of Radar.</p>
+      <p className="text-muted">
+        Everyone gets {PLAY_LIMIT_S / 3600} hours a day, so live flights stay free for all players. The Radar comes back at
+        midnight UTC{back && ` (in ${back})`}. Your collection is still open.
+      </p>
     </div>
   );
 }

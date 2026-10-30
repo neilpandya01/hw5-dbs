@@ -40,7 +40,8 @@ export function FeedStatus({ feed, now, shown }: { feed: Feed; now: number; show
           <span>
             Live · updated {ago(feed.updatedAt, now)} ·{" "}
             {shown > 0 ? `${planes} within ${VIEW_MI} mi` : `no planes within ${VIEW_MI} mi right now`}
-            {feed.slow && <span className="text-muted"> · updating less often to save today&apos;s limit</span>}
+            {feed.pace === "normal" && <span className="text-muted"> · updating every 30 s right now</span>}
+            {feed.pace === "slow" && <span className="text-muted"> · updating less often to save today&apos;s limit</span>}
           </span>
         </p>
       );
@@ -67,7 +68,7 @@ export function FeedProblem({ feed }: { feed: Feed }) {
   return (
     <div role="alert" className="flex flex-col gap-1 rounded-xl border border-danger bg-surface px-4 py-3 text-sm">
       <p className="font-medium text-danger">
-        {feed.status === "limit" ? "Sky Hunt has used today's flight data limit." : "Flight data can't be displayed right now."}
+        {feed.status === "limit" ? "Sky Hunt has reached today's flight data limit." : "Flight data can't be displayed right now."}
       </p>
       <p className="text-ink">
         {feed.status === "limit"

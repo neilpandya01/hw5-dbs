@@ -197,12 +197,17 @@ export async function finishOnboarding(): Promise<boolean> {
   );
 }
 
-/** "I'm still here": the worker only fetches planes near people active in the last minute. */
-export async function touchHunter(): Promise<boolean> {
+/**
+ * "I'm still here": the worker only fetches planes near people active in the last minute.
+ * The database also counts today's Radar time (2 hours a day) and stops marking you active when it's
+ * used up. Returns the seconds of Radar time left today, or null if it couldn't be checked.
+ */
+export async function touchHunter(): Promise<number | null> {
   const sb = supabase();
-  if (!sb || !snapshot) return false;
-  const { error } = await sb.rpc("touch_hunter");
-  return !error;
+  if (!sb || !snapshot) return null;
+  const { data, error } = await sb.rpc("touch_hunter");
+  if (error || typeof data !== "number") return null;
+  return data;
 }
 
 /** Why a catch was refused, from catch_plane()'s error codes. */
@@ -214,9 +219,19 @@ export type CatchError =
   | "ALREADY_CAUGHT"
   | "GONE"
   | "NO_LOCATION"
+  | "PLAY_LIMIT"
   | "FAILED";
 
-const CODES: CatchError[] = ["NOT_COMMERCIAL", "STALE", "AIRPORT_ZONE", "OUT_OF_RANGE", "ALREADY_CAUGHT", "GONE", "NO_LOCATION"];
+const CODES: CatchError[] = [
+  "NOT_COMMERCIAL",
+  "STALE",
+  "AIRPORT_ZONE",
+  "OUT_OF_RANGE",
+  "ALREADY_CAUGHT",
+  "GONE",
+  "NO_LOCATION",
+  "PLAY_LIMIT",
+];
 
 /**
  * Catch a plane. The database checks the rules against the plane's last ping and where you are
